@@ -1380,7 +1380,6 @@
   <button class="nav-btn"        data-tab="relegation"  onclick="showTab('relegation')">League Odds</button>
   <button class="nav-btn"        data-tab="survival"      onclick="showTab('survival')">Survival</button>
   <span class="nav-div"></span>
-  <button class="nav-btn"        data-tab="hull"        onclick="showTab('hull')">Hull City</button>
   <button class="nav-btn"        data-tab="nextmatch"   onclick="showTab('nextmatch')">Next Match</button>
   <span class="nav-div"></span>
   <button class="nav-btn"        data-tab="squad"         onclick="showTab('squad')">Squad</button>
@@ -1757,55 +1756,7 @@
     </div>
   </section>
 
-  <!-- ═══ HULL CITY TAB ═══ -->
-  <section id="tab-hull" class="section">
-
-    <div class="card" style="margin-bottom:20px">
-      <div class="card-header" style="background:linear-gradient(90deg,#1a0a00,#3a1e00)">
-        <span class="card-title" style="color:#F5A12D">Hull City Squad — 2026/27</span>
-        <div style="display:flex;gap:8px;align-items:center">
-          <span id="stats-season-label" style="font-size:0.72rem;color:rgba(245,161,45,0.6)"></span>
-          <button class="btn btn-green" style="font-size:0.75rem;padding:5px 12px" onclick="refreshStats(false)">Refresh Stats</button>
-          <button class="btn btn-ghost" style="font-size:0.75rem;padding:5px 10px" onclick="importSquad(true)">Refresh Squad</button>
-        </div>
-      </div>
-
-      <div class="squad-log" id="squad-log"></div>
-
-      <div style="overflow-x:auto">
-        <table class="player-tbl" id="player-tbl">
-          <thead>
-            <tr>
-              <th style="text-align:left">Player</th>
-              <th>Pos</th>
-              <th title="Championship appearances">Champ</th>
-              <th title="All-competition appearances">All</th>
-              <th title="Goals">Gls</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="player-tbody"></tbody>
-        </table>
-        <div class="empty-msg" id="squad-empty">
-          No players yet. Import from the web or add manually above.
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-header" style="background:linear-gradient(90deg,#1a0a00,#3a1e00)">
-        <span class="card-title" style="color:#F5A12D">Hull City Probability Trend</span>
-        <span style="font-size:0.75rem;color:rgba(245,161,45,0.6)">Saved each time you run simulations</span>
-      </div>
-      <div id="trend-empty" style="padding:24px;text-align:center;color:var(--text-secondary);font-size:0.85rem">
-        Run simulations on the League Odds tab to build the trend chart.
-      </div>
-      <div class="trend-wrap" id="trend-wrap" style="display:none">
-        <canvas id="trend-chart"></canvas>
-      </div>
-    </div>
-
-  </section>
+  
 
   <!-- ═══ CHAMPIONSHIP ANALYSIS ═══ -->
   <section id="tab-champanalysis" class="section">
@@ -1901,6 +1852,20 @@
       </div>
       <div id="surv-traj"></div>
     </div>
+  
+<div class="card">
+      <div class="card-header" style="background:linear-gradient(90deg,#1a0a00,#3a1e00)">
+        <span class="card-title" style="color:#F5A12D">Hull City Probability Trend</span>
+        <span style="font-size:0.75rem;color:rgba(245,161,45,0.6)">Saved each time you run simulations</span>
+      </div>
+      <div id="trend-empty" style="padding:24px;text-align:center;color:var(--text-secondary);font-size:0.85rem">
+        Run simulations on the League Odds tab to build the trend chart.
+      </div>
+      <div class="trend-wrap" id="trend-wrap" style="display:none">
+        <canvas id="trend-chart"></canvas>
+      </div>
+    </div>
+
   </section>
 
   <!-- ═══ xG TABLE ═══ -->
@@ -2106,7 +2071,6 @@ let STATE = { results: [], mcHistory: [] };
 let FIXTURES_SOURCE = 'random'; // 'random' | 'official'
 
 // Squad lives in the server cache (not in STATE); loaded separately
-let SQUAD = [];
 
 function saveState() {
   _survData = null;   // state changed → survival cache is stale, recompute on next open
@@ -2180,61 +2144,10 @@ async function loadState() {
   saveState();
 }
 
-async function loadSquad() {
-  try {
-    const res = await fetch('/api/squad');
-    if (res.ok) {
-      const d = await res.json();
-      SQUAD = (d.players || []).slice().sort((a, b) => (a.number || 999) - (b.number || 999));
-    }
-  } catch(e) {}
-}
 
-// STATS: keyed by player display name (lowercase, normalised)
-let STATS      = {};
-let STATS_META = { season: null, comp: null, fetched: null };
 
-function _normName(n) {
-  return (n || '').toLowerCase().replace(/[^a-z\s]/g, '').replace(/\s+/g, ' ').trim();
-}
 
-async function loadStats() {
-  try {
-    const res = await fetch('/api/stats');
-    if (res.ok) {
-      const d = await res.json();
-      STATS_META = { season: d.season, fetched: d.fetched };
-      STATS = {};
-      Object.entries(d.players || {}).forEach(([name, s]) => {
-        STATS[_normName(name)] = s;
-      });
-    }
-  } catch(e) {}
-}
 
-async function refreshStats(force = false) {
-  const log = document.getElementById('squad-log');
-  log.textContent = 'Refreshing player stats…';
-  log.classList.add('visible');
-  try {
-    const res  = await fetch('/api/stats/import', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ force }),
-    });
-    const data = await res.json();
-    if (!res.ok || data.error) throw new Error(data.error || 'Failed');
-    STATS_META = { season: data.season, fetched: null };
-    STATS = {};
-    Object.entries(data.players || {}).forEach(([name, s]) => {
-      STATS[_normName(name)] = s;
-    });
-    renderSquad();
-    log.textContent = `✓ Stats updated — ${data.season || 'current season'}`;
-    toast('Player stats refreshed');
-  } catch(err) {
-    log.textContent = `Stats error: ${err.message}`;
-  }
-}
 
 // ═══════════════════════════════════════════════════
 // HELPERS
@@ -2701,7 +2614,6 @@ const _groupSub = Object.fromEntries(Object.entries(TAB_GROUPS).map(([g, s]) => 
 
 const TAB_INIT = {
   matchweek:     () => initMatchweek(),
-  hull:          () => initHullTab(),
   champanalysis: () => initAnalysisTab('champ'),
   planalysis:    () => { initAnalysisTab('pl'); loadPlayerRater(); },
   styles:        () => initStylesTab(),
@@ -4493,110 +4405,9 @@ function runNextMatchSim() {
 // ═══════════════════════════════════════════════════
 // HULL CITY SQUAD & PLAYER TRACKER
 // ═══════════════════════════════════════════════════
-async function importSquad(force = false) {
-  const log = document.getElementById('squad-log');
-  log.textContent = 'Fetching squad from thesportsdb.com…';
-  log.classList.add('visible');
 
-  try {
-    const res  = await fetch('/api/squad/import', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ force }),
-    });
-    const data = await res.json();
-    if (!res.ok || data.error) throw new Error(data.error || 'Import failed');
 
-    // Merge: add players not already in SQUAD (match by id — stable even for unnumbered players)
-    const existingIds = new Set(SQUAD.map(p => p.id));
-    let added = 0;
-    (data.players || []).forEach(p => {
-      if (existingIds.has(p.id)) return;
-      SQUAD.push({ ...p });
-      existingIds.add(p.id);
-      added++;
-    });
 
-    SQUAD.sort((a, b) => (a.number || 999) - (b.number || 999));
-    saveState();
-    renderSquad();
-    log.textContent = `✓ ${data.count} players fetched — ${added} new added to squad`;
-    toast(`Squad updated: ${added} new players`);
-  } catch(err) {
-    log.textContent = `Error: ${err.message}`;
-    toast('Squad import failed');
-  }
-}
-
-function removePlayer(id) {
-  if (!confirm('Remove this player from the squad?')) return;
-  SQUAD = SQUAD.filter(p => p.id !== id);
-  renderSquad();
-}
-
-function renderSquad() {
-  const tbody = document.getElementById('player-tbody');
-  const empty = document.getElementById('squad-empty');
-  const tbl   = document.getElementById('player-tbl');
-  if (!tbody) return;
-
-  // Update season label
-  const lbl = document.getElementById('stats-season-label');
-  if (lbl) lbl.textContent = STATS_META.season ? `${STATS_META.season}` : '';
-
-  if (!SQUAD.length) {
-    tbody.innerHTML = '';
-    empty.style.display = 'block';
-    tbl.style.display   = 'none';
-    return;
-  }
-  empty.style.display = 'none';
-  tbl.style.display   = '';
-
-  tbody.innerHTML = SQUAD.map(p => {
-    const norm = _normName(p.name);
-    // Try exact match first, then partial last-name match
-    let s = STATS[norm];
-    if (!s) {
-      const lastName = norm.split(' ').slice(-1)[0];
-      const key = Object.keys(STATS).find(k => k.endsWith(lastName));
-      if (key) s = STATS[key];
-    }
-    s = s || { goals:0, assists:0, yellow:0, red:0, apps:0 };
-
-    const statVal = (v) => `<td style="font-weight:${v ? '700' : '400'};color:${v ? '#fff' : 'var(--text-secondary)'}">${v ?? '—'}</td>`;
-
-    return `
-      <tr>
-        <td>
-          <span style="color:var(--text-secondary);font-size:0.75rem;font-weight:600;margin-right:6px">#${p.number||'—'}</span>
-          ${p.name}
-        </td>
-        <td><span class="pos-badge pos-${p.pos}">${p.pos}</span></td>
-        ${statVal(s.apps)}
-        ${statVal(s.total_apps)}
-        ${statVal(s.goals)}
-        <td><button class="res-del" onclick="removePlayer('${p.id}')" title="Remove">✕</button></td>
-      </tr>`;
-  }).join('');
-}
-
-async function initHullTab() {
-  const log = document.getElementById('squad-log');
-  // Auto-import squad on first visit
-  if (!SQUAD.length) {
-    log.textContent = 'Auto-importing squad…';
-    log.classList.add('visible');
-    await importSquad(false);
-  }
-  // Auto-load stats on first visit
-  if (!Object.keys(STATS).length) {
-    log.textContent = 'Auto-importing player stats…';
-    log.classList.add('visible');
-    await refreshStats(false);
-  }
-  renderSquad();
-  drawTrendChart();
-}
 
 // ═══════════════════════════════════════════════════
 // MATCHWEEK SUMMARY
@@ -5740,7 +5551,7 @@ function initDashboard() { renderDashboard(); }
 // INIT
 // ═══════════════════════════════════════════════════
 (async () => {
-  await Promise.all([loadState(), loadSquad(), loadStats()]);
+  await loadState();
 
   // Always try to fetch or refresh official fixtures.
   // The server-side cache (24 h partial / 7 day full) prevents excessive
