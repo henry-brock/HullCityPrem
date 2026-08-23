@@ -1,0 +1,15 @@
+# Scraped third-party match data — all regenerable by running the scrapers.
+# Kept out of the repo for size (~26MB) and to avoid redistributing Opta/Pulse data.
+cache/
+Newcache/
+
+# Local app state — rebuilt on first run; changes on every result entered.
+data.json
+
+# Runtime / editor / tooling
+.server.pid
+__pycache__/
+*.pyc
+.claude/
+.zed/
+.DS_Store
