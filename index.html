@@ -1118,6 +1118,24 @@
     .ts-rank { width: 12px; color: var(--text-secondary); font-size: 0.66rem; flex-shrink: 0; }
     .ts-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .ts-val { font-weight: 700; font-variant-numeric: tabular-nums; }
+    /* ── Second-level nav for grouped tabs ── */
+    .subnav {
+      display: flex; gap: 6px; flex-wrap: wrap;
+      padding: 8px 22px; background: rgba(255,255,255,0.02);
+      border-bottom: 1px solid rgba(255,255,255,0.07);
+    }
+    .subnav-btn {
+      background: none; border: 1px solid rgba(255,255,255,0.12);
+      color: var(--text-secondary); border-radius: 6px;
+      padding: 4px 12px; font-size: 0.76rem; font-weight: 600;
+      cursor: pointer; font-family: inherit;
+    }
+    .subnav-btn:hover { color: #e0e0e0; border-color: rgba(255,255,255,0.25); }
+    .subnav-btn.active {
+      background: rgba(245,161,45,0.14); border-color: rgba(245,161,45,0.5);
+      color: #F5A12D;
+    }
+
     .press-tag {
       display: inline-block; padding: 1px 6px; border-radius: 4px;
       font-size: 0.62rem; font-weight: 700; white-space: nowrap;
@@ -1365,15 +1383,14 @@
   <button class="nav-btn"        data-tab="hull"        onclick="showTab('hull')">Hull City</button>
   <button class="nav-btn"        data-tab="nextmatch"   onclick="showTab('nextmatch')">Next Match</button>
   <span class="nav-div"></span>
-  <button class="nav-btn"        data-tab="champanalysis" onclick="showTab('champanalysis')">Champ Analysis</button>
-  <button class="nav-btn"        data-tab="planalysis"    onclick="showTab('planalysis')">PL Analysis</button>
-  <button class="nav-btn"        data-tab="styles"        onclick="showTab('styles')">Styles</button>
-  <button class="nav-btn"        data-tab="xgtable"       onclick="showTab('xgtable')">xG Table</button>
-  <button class="nav-btn"        data-tab="teamstats"     onclick="showTab('teamstats')">Team Stats</button>
-  <button class="nav-btn"        data-tab="derived"       onclick="showTab('derived')">Derived Stats</button>
+  <button class="nav-btn"        data-tab="squad"         onclick="showTab('squad')">Squad</button>
+  <button class="nav-btn"        data-tab="analytics"     onclick="showTab('analytics')">Team Analytics</button>
   <span class="nav-div"></span>
   <button class="nav-btn"        data-tab="settings"      onclick="showTab('settings')">⚙</button>
 </nav>
+
+<!-- Second-level nav, shown only for tabs that group several views. -->
+<div id="subnav" class="subnav" style="display:none"></div>
 
 <div class="content">
 
@@ -2663,23 +2680,76 @@ function renderStrTable() {
 // ═══════════════════════════════════════════════════
 // NAVIGATION
 // ═══════════════════════════════════════════════════
+// Several nav buttons open a group of related views rather than a single one,
+// which keeps the top bar readable. The underlying sections are untouched —
+// a group just decides which of them is visible and draws a second-level bar.
+const TAB_GROUPS = {
+  table:     [['table',         'League table'],
+              ['xgtable',       'xG table']],
+  squad:     [['planalysis',    'Premier League 26/27'],
+              ['champanalysis', 'Championship 25/26']],
+  analytics: [['styles',        'Styles'],
+              ['teamstats',     'Team Stats'],
+              ['derived',       'Derived Stats']],
+};
+
+const _groupOf = {};
+Object.entries(TAB_GROUPS).forEach(([g, subs]) => subs.forEach(([s]) => { _groupOf[s] = g; }));
+// Remembers where you were in each group, so switching away and back returns
+// you to the same view.
+const _groupSub = Object.fromEntries(Object.entries(TAB_GROUPS).map(([g, s]) => [g, s[0][0]]));
+
+const TAB_INIT = {
+  matchweek:     () => initMatchweek(),
+  hull:          () => initHullTab(),
+  champanalysis: () => initAnalysisTab('champ'),
+  planalysis:    () => { initAnalysisTab('pl'); loadPlayerRater(); },
+  styles:        () => initStylesTab(),
+  survival:      () => initSurvivalTab(),
+  home:          () => renderDashboard(),
+  xgtable:       () => renderXGTable(),
+  teamstats:     () => loadTeamStats(),
+  derived:       () => loadDerived(),
+  settings:      () => renderSettings(),
+  nextmatch:     () => initNextMatch(),
+};
+
 function showTab(name) {
+  // A group name opens whichever of its views you last used; a plain section
+  // name inside a group still works, so old links and buttons keep working.
+  if (TAB_GROUPS[name]) return _showSection(_groupSub[name], name);
+  const group = _groupOf[name];
+  if (group) { _groupSub[group] = name; return _showSection(name, group); }
+  _showSection(name, name);
+}
+
+function showSub(section) {
+  const group = _groupOf[section];
+  if (!group) return;
+  _groupSub[group] = section;
+  _showSection(section, group);
+}
+
+function _showSection(section, navKey) {
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-  document.getElementById('tab-' + name)?.classList.add('active');
-  document.querySelector(`[data-tab="${name}"]`)?.classList.add('active');
-  if (name === 'matchweek') initMatchweek();
-  if (name === 'hull')           initHullTab();
-  if (name === 'champanalysis')  initAnalysisTab('champ');
-  if (name === 'planalysis')   { initAnalysisTab('pl'); loadPlayerRater(); }
-  if (name === 'styles')         initStylesTab();
-  if (name === 'survival')       initSurvivalTab();
-  if (name === 'home')           renderDashboard();
-  if (name === 'xgtable')        renderXGTable();
-  if (name === 'teamstats')      loadTeamStats();
-  if (name === 'derived')        loadDerived();
-  if (name === 'settings')       renderSettings();
-  if (name === 'nextmatch')      initNextMatch();
+  document.getElementById('tab-' + section)?.classList.add('active');
+  document.querySelector(`[data-tab="${navKey}"]`)?.classList.add('active');
+
+  const bar  = document.getElementById('subnav');
+  const subs = TAB_GROUPS[navKey];
+  if (bar) {
+    if (subs) {
+      bar.style.display = '';
+      bar.innerHTML = subs.map(([s, label]) =>
+        `<button class="subnav-btn${s === section ? ' active' : ''}" onclick="showSub('${s}')">${label}</button>`
+      ).join('');
+    } else {
+      bar.style.display = 'none';
+      bar.innerHTML = '';
+    }
+  }
+  TAB_INIT[section]?.();
 }
 
 // ═══════════════════════════════════════════════════
