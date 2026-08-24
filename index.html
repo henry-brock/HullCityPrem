@@ -1118,22 +1118,49 @@
     .ts-rank { width: 12px; color: var(--text-secondary); font-size: 0.66rem; flex-shrink: 0; }
     .ts-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .ts-val { font-weight: 700; font-variant-numeric: tabular-nums; }
-    /* ── Second-level nav for grouped tabs ── */
+    /* ── Second-level nav for grouped tabs ──
+       Made deliberately loud: the first version was a thin strip of outlined
+       buttons that read as page furniture, so it was easy to miss that a tab
+       held several views at all. It now carries the parent name as a
+       breadcrumb and a filled active pill. */
     .subnav {
-      display: flex; gap: 6px; flex-wrap: wrap;
-      padding: 8px 22px; background: rgba(255,255,255,0.02);
-      border-bottom: 1px solid rgba(255,255,255,0.07);
+      display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+      padding: 11px 22px;
+      background: linear-gradient(90deg, rgba(245,161,45,0.10), rgba(245,161,45,0.02));
+      border-bottom: 1px solid rgba(245,161,45,0.25);
+      box-shadow: inset 0 3px 0 -1px var(--pl-green);
+    }
+    .subnav-parent {
+      font-size: 0.7rem; font-weight: 800; letter-spacing: 0.06em;
+      text-transform: uppercase; color: var(--pl-green);
+      display: flex; align-items: center; gap: 7px; margin-right: 4px;
+    }
+    .subnav-parent::after {
+      content: '›'; color: rgba(255,255,255,0.35); font-size: 1.05rem;
+      font-weight: 400; line-height: 1;
     }
     .subnav-btn {
-      background: none; border: 1px solid rgba(255,255,255,0.12);
-      color: var(--text-secondary); border-radius: 6px;
-      padding: 4px 12px; font-size: 0.76rem; font-weight: 600;
-      cursor: pointer; font-family: inherit;
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.14);
+      color: var(--text-secondary); border-radius: 999px;
+      padding: 6px 15px; font-size: 0.8rem; font-weight: 700;
+      cursor: pointer; font-family: inherit; transition: all 0.15s;
     }
-    .subnav-btn:hover { color: #e0e0e0; border-color: rgba(255,255,255,0.25); }
+    .subnav-btn:hover {
+      color: #fff; border-color: rgba(245,161,45,0.5);
+      background: rgba(245,161,45,0.12);
+    }
     .subnav-btn.active {
-      background: rgba(245,161,45,0.14); border-color: rgba(245,161,45,0.5);
-      color: #F5A12D;
+      background: #F5A12D; border-color: #F5A12D; color: #1a1a1a;
+      box-shadow: 0 2px 10px rgba(245,161,45,0.35);
+    }
+    /* Marks the top-level tabs that open several views. */
+    .nav-btn .caret {
+      font-size: 0.62rem; opacity: 0.55; margin-left: 4px; vertical-align: 1px;
+    }
+    .nav-btn.active .caret { opacity: 1; }
+    @media (max-width: 700px) {
+      .subnav { padding: 9px 14px; gap: 6px; }
+      .subnav-parent { width: 100%; margin-bottom: 2px; }
     }
 
     .press-tag {
@@ -1372,9 +1399,8 @@
 <nav class="nav">
   <button class="nav-btn active" data-tab="home"       onclick="showTab('home')">🏠 Home</button>
   <span class="nav-div"></span>
-  <button class="nav-btn"        data-tab="table"      onclick="showTab('table')">Table</button>
-  <button class="nav-btn"        data-tab="matchweek" onclick="showTab('matchweek')">Matchweek</button>
-  <button class="nav-btn"        data-tab="results"   onclick="showTab('results')">Enter Result</button>
+  <button class="nav-btn"        data-tab="table"      onclick="showTab('table')">Table<span class="caret">▾</span></button>
+  <button class="nav-btn"        data-tab="matchweek" onclick="showTab('matchweek')">Matchweek<span class="caret">▾</span></button>
   <span class="nav-div"></span>
   <button class="nav-btn"        data-tab="simulate"  onclick="showTab('simulate')">Simulate</button>
   <button class="nav-btn"        data-tab="relegation"  onclick="showTab('relegation')">League Odds</button>
@@ -1382,8 +1408,8 @@
   <span class="nav-div"></span>
   <button class="nav-btn"        data-tab="nextmatch"   onclick="showTab('nextmatch')">Next Match</button>
   <span class="nav-div"></span>
-  <button class="nav-btn"        data-tab="squad"         onclick="showTab('squad')">Squad</button>
-  <button class="nav-btn"        data-tab="analytics"     onclick="showTab('analytics')">Team Analytics</button>
+  <button class="nav-btn"        data-tab="squad"         onclick="showTab('squad')">Squad<span class="caret">▾</span></button>
+  <button class="nav-btn"        data-tab="analytics"     onclick="showTab('analytics')">Team Analytics<span class="caret">▾</span></button>
   <span class="nav-div"></span>
   <button class="nav-btn"        data-tab="settings"      onclick="showTab('settings')">⚙</button>
 </nav>
@@ -2599,6 +2625,8 @@ function renderStrTable() {
 const TAB_GROUPS = {
   table:     [['table',         'League table'],
               ['xgtable',       'xG table']],
+  matchweek: [['matchweek',     'Fixtures'],
+              ['results',       'Enter Result']],
   squad:     [['planalysis',    'Premier League 26/27'],
               ['champanalysis', 'Championship 25/26']],
   analytics: [['styles',        'Styles'],
@@ -2653,8 +2681,11 @@ function _showSection(section, navKey) {
   if (bar) {
     if (subs) {
       bar.style.display = '';
-      bar.innerHTML = subs.map(([s, label]) =>
-        `<button class="subnav-btn${s === section ? ' active' : ''}" onclick="showSub('${s}')">${label}</button>`
+      // Name the parent so it is obvious which tab these views belong to.
+      const parent = document.querySelector(`[data-tab="${navKey}"]`);
+      const label  = parent ? parent.textContent.replace('▾', '').trim() : '';
+      bar.innerHTML = `<span class="subnav-parent">${label}</span>` + subs.map(([s, l]) =>
+        `<button class="subnav-btn${s === section ? ' active' : ''}" onclick="showSub('${s}')">${l}</button>`
       ).join('');
     } else {
       bar.style.display = 'none';
