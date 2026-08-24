@@ -50,7 +50,7 @@ CONCEPTS_OUT = {
                                "shotCreated", "penAreaEntries", "accurateCrosses"],
                      "ctx": "att"},
     "Passing":      {"stats": ["accuratePasses", "passPct", "accurateLongBalls"],
-                     "ctx": "att"},
+                     "ctx": "pass"},
     "Progression":  {"stats": ["carries", "progressiveCarries", "finalThirdEntries"],
                      "ctx": "att"},
     "Ball-winning": {"stats": ["effectiveTackles", "interceptions", "ballRecoveries",
@@ -65,13 +65,13 @@ CONCEPTS_OUT = {
 
 CONCEPTS_GK = {
     "Shot-stopping": {"stats": ["saves", "savePct", "savedIbox", "bigChanceSaves",
-                                "diveSaves"], "ctx": "def"},
+                                "diveSaves"], "ctx": "sot"},
     "Claiming":      {"stats": ["crossesCaught", "highClaims", "punches", "gkSmother"],
-                      "ctx": "def"},
+                      "ctx": "cross"},
     "Sweeping":      {"stats": ["keeperSweeper", "accKeeperSweeper"], "ctx": "def"},
     "Distribution":  {"stats": ["passPct", "accurateLongBalls", "accurateGoalKicks",
-                                "accKeeperThrows"], "ctx": "att"},
-    "Conceding":     {"stats": ["goalsConceded"], "ctx": "def", "neg": True},
+                                "accKeeperThrows"], "ctx": "pass"},
+    "Conceding":     {"stats": ["goalsConceded"], "ctx": "sot", "neg": True},
 }
 
 # Positional relevance — how much a concept matters to doing THAT job well.
@@ -145,35 +145,55 @@ def _percentile(value, pool) -> float:
     return (below + equal / 2) / len(vals) * 100
 
 
+# What a concept's counting stats should be normalised BY. One blanket
+# "defensive load" figure is wrong for several of them: a keeper's claims
+# should be judged per cross faced, not per shot faced, and Hull face roughly
+# double the league's crosses while facing only slightly more shots — so a
+# shots-based divisor barely corrects the volume and leaves claims looking
+# inflated. Each key maps to the opponent (or own) stat that represents the
+# opportunity count.
+CONTEXT_STATS = {
+    "att":   ("own", "total_scoring_att"),      # team attacking volume
+    "def":   ("opp", "total_scoring_att"),      # shots faced
+    "sot":   ("opp", "ontarget_scoring_att"),   # shots on target faced
+    "cross": ("opp", "total_cross"),            # crosses faced
+    "pass":  ("own", "total_pass"),             # team passing volume
+}
+
+
 def team_context(season: str = "2627") -> dict:
     """
-    Per-team attacking and defensive volume, relative to the league mean.
+    Per-team volume on each context axis, relative to the league mean.
 
-    att > 1 = the team creates more than average, so its players' attacking
-    counts are deflated. def > 1 = the team faces more, so defensive counts
-    are deflated. Missing teams fall back to 1.0 (no adjustment).
+    A value > 1 means the team sees more of that thing than average, so its
+    players' related counts are deflated to compensate. Missing teams and
+    missing axes fall back to 1.0 (no adjustment).
     """
     path = ROOT / "Newcache" / f"pl_{season}.json"
     if not path.exists():
         return {}
     data = json.loads(path.read_text())
-    att, dfn = {}, {}
+
+    acc = {axis: {} for axis in CONTEXT_STATS}
     for m in data.get("matches", []):
         for side, other in (("home", "away"), ("away", "home")):
             tid = m.get(f"{side}Id")
             if not tid:
                 continue
-            own = m["stats"].get(side) or {}
-            opp = m["stats"].get(other) or {}
-            att.setdefault(tid, []).append(float(own.get("total_scoring_att") or 0))
-            dfn.setdefault(tid, []).append(float(opp.get("total_scoring_att") or 0))
-    if not att:
+            blocks = {"own": m["stats"].get(side) or {},
+                      "opp": m["stats"].get(other) or {}}
+            for axis, (which, stat) in CONTEXT_STATS.items():
+                acc[axis].setdefault(tid, []).append(float(blocks[which].get(stat) or 0))
+
+    if not acc["def"]:
         return {}
     mean = lambda xs: sum(xs) / len(xs) if xs else 0.0
-    la = mean([mean(v) for v in att.values()]) or 1.0
-    ld = mean([mean(v) for v in dfn.values()]) or 1.0
-    return {t: {"att": (mean(att[t]) / la) or 1.0,
-                "def": (mean(dfn.get(t, [ld])) / ld) or 1.0} for t in att}
+    out = {}
+    for axis, per_team in acc.items():
+        league = mean([mean(v) for v in per_team.values()]) or 1.0
+        for tid, vals in per_team.items():
+            out.setdefault(tid, {})[axis] = (mean(vals) / league) or 1.0
+    return out
 
 
 def rate(players: list[dict], target_team: str = "hull", season: str = "2627",
