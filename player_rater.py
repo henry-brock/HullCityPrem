@@ -74,10 +74,10 @@ CONCEPTS_GK = {
     "Conceding":     {"stats": ["goalsConceded"], "ctx": "def", "neg": True},
 }
 
-# Concept weights per position. Judgement, not derived — the honest place to
-# argue. Weighting concepts by their season-to-season repeatability would be
-# the principled upgrade, and needs multi-season player data to calibrate.
-WEIGHTS = {
+# Positional relevance — how much a concept matters to doing THAT job well.
+# This part is judgement and is meant to be: a striker is judged on shooting,
+# a centre-back on defending.
+BASE_WEIGHTS = {
     "G": {"Shot-stopping": 5, "Claiming": 2, "Sweeping": 1, "Distribution": 2,
           "Conceding": 3},
     "D": {"Defending": 4, "Duels": 4, "Ball-winning": 3, "Passing": 2,
@@ -86,6 +86,37 @@ WEIGHTS = {
           "Duels": 2, "Security": 2, "Shooting": 2, "Defending": 1},
     "F": {"Shooting": 5, "Creation": 3, "Progression": 2, "Duels": 1,
           "Passing": 1, "Security": 1, "Ball-winning": 0.5},
+}
+
+# How much of a concept carries from one season to the next, measured on 167
+# outfielders who stayed at the same club across 2024/25 → 2025/26 with ≥600
+# minutes in each (player_repeatability.py). Normalised so the most repeatable
+# concept scores 1.0.
+#
+# These MODULATE the positional weights rather than replacing them —
+# repeatability is not importance. Passing repeats at r=0.86 for everybody,
+# which does not make it the right way to judge a striker. Multiplying keeps
+# the positional logic while trusting flaky concepts less.
+#
+# Progression is deliberately 1.0 (no adjustment): carries, progressive
+# carries and final-third entries were not collected in 2024/25, so it is
+# UNMEASURED, not unrepeatable. Penalising it would be penalising missing data.
+#
+# Goalkeepers are left unmodulated — only 9 kept at the same club cleared the
+# minutes bar, which is too thin to reweight on. Worth noting their
+# shot-stopping came out at r=0.46, pointing the same way as the team-level
+# finding that save efficiency barely persists (r=0.038); revisit with more
+# seasons.
+REPEATABILITY = {
+    "Passing": 1.00, "Shooting": 0.94, "Duels": 0.94, "Defending": 0.90,
+    "Ball-winning": 0.84, "Security": 0.78, "Creation": 0.74,
+    "Progression": 1.00,
+}
+
+WEIGHTS = {
+    pos: {c: round(w * (1.0 if pos == "G" else REPEATABILITY.get(c, 1.0)), 2)
+          for c, w in base.items()}
+    for pos, base in BASE_WEIGHTS.items()
 }
 
 RATING_LABEL = {"G": "Goalkeeping", "D": "Defending", "M": "Influence", "F": "Goal threat"}
