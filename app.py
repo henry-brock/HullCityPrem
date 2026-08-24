@@ -4,8 +4,6 @@ from flask import Flask, jsonify, request, send_file
 from pathlib import Path
 from scraper import fetch as scrape_season, SeasonNotAvailable
 from pulse_results import fetch as scrape_live
-from squad_scraper import fetch as scrape_squad, SQUAD_CACHE
-from stats_scraper import fetch as scrape_stats, STATS_CACHE
 from fixture_scraper import fetch as scrape_fixtures, FixturesNotAvailable
 from collections import defaultdict
 import json
@@ -51,57 +49,6 @@ def post_state():
             payload["fixturesSource"] = data["fixturesSource"]
         _save(payload)
         return jsonify({"ok": True})
-    except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
-
-
-@app.route("/api/squad", methods=["GET"])
-def get_squad():
-    """Return the cached Hull City squad (no network hit)."""
-    if SQUAD_CACHE.exists():
-        try:
-            return jsonify(json.loads(SQUAD_CACHE.read_text()))
-        except Exception:
-            pass
-    return jsonify({"team": "Hull City", "players": [], "fetched": None})
-
-
-@app.route("/api/stats", methods=["GET"])
-def get_stats():
-    """Return cached player stats (no network hit)."""
-    if STATS_CACHE.exists():
-        try:
-            return jsonify(json.loads(STATS_CACHE.read_text()))
-        except Exception:
-            pass
-    return jsonify({"team": "Hull City", "players": {}, "season": None})
-
-
-@app.route("/api/stats/import", methods=["POST"])
-def import_stats():
-    """Scrape (or read from cache) Hull City player stats.
-    Prefers the Premier League Pulse API, falls back to Wikipedia.
-    Body: { "force": false }
-    """
-    try:
-        body  = request.get_json(force=True, silent=True) or {}
-        force = bool(body.get("force", False))
-        data  = scrape_stats(force=force)
-        return jsonify({"ok": True, "season": data.get("season"), "players": data.get("players", {})})
-    except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
-
-
-@app.route("/api/squad/import", methods=["POST"])
-def import_squad():
-    """Scrape (or read from cache) Hull City's squad from thesportsdb.com.
-    Body: { "force": false }
-    """
-    try:
-        body  = request.get_json(force=True, silent=True) or {}
-        force = bool(body.get("force", False))
-        players = scrape_squad(force=force)
-        return jsonify({"ok": True, "players": players, "count": len(players)})
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 

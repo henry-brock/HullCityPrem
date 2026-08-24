@@ -1402,8 +1402,7 @@
   <button class="nav-btn"        data-tab="table"      onclick="showTab('table')">Table<span class="caret">▾</span></button>
   <button class="nav-btn"        data-tab="matchweek" onclick="showTab('matchweek')">Matchweek<span class="caret">▾</span></button>
   <span class="nav-div"></span>
-  <button class="nav-btn"        data-tab="simulate"  onclick="showTab('simulate')">Simulate</button>
-  <button class="nav-btn"        data-tab="relegation"  onclick="showTab('relegation')">League Odds</button>
+  <button class="nav-btn"        data-tab="simulate"  onclick="showTab('simulate')">Simulate<span class="caret">▾</span></button>
   <button class="nav-btn"        data-tab="survival"      onclick="showTab('survival')">Survival</button>
   <span class="nav-div"></span>
   <button class="nav-btn"        data-tab="nextmatch"   onclick="showTab('nextmatch')">Next Match</button>
@@ -2627,6 +2626,8 @@ const TAB_GROUPS = {
               ['xgtable',       'xG table']],
   matchweek: [['matchweek',     'Fixtures'],
               ['results',       'Enter Result']],
+  simulate:  [['simulate',      'Run & Projection'],
+              ['relegation',    'League Odds']],
   squad:     [['planalysis',    'Premier League 26/27'],
               ['champanalysis', 'Championship 25/26']],
   analytics: [['styles',        'Styles'],
@@ -3683,8 +3684,23 @@ let relChart = null;
 // Multipliers kept moderate because the dynamic σ (#1) already widens the
 // whole league pre-season; these add Hull's extra, divergence-scaled share.
 const PROMOTED_SIGMA = { hull: 1.45, ipswich: 1.20, coventry: 1.15 };
+
+// Second-season sides whose prior rests on ONE Premier League season rather
+// than three — 38 matches of evidence against 114. This widens their season
+// noise only; it is deliberately NOT part of PROMOTED_SIGMA, because that
+// object also drives the rating blend cap above (0.80 vs 0.65) and these
+// teams should keep the normal cap.
+//
+// Honest status: UNTESTABLE on the current window. Every promoted side in
+// 2023/24 and 2024/25 was relegated immediately, so there is no precedent for
+// a second-season promoted team to calibrate against — Sunderland and Leeds
+// are the first cases. The justification is sampling error (a mean from 38
+// games is less certain than one from 114), not a football claim. Effect is
+// small: Sunderland's relegation odds move ~+0.9pp, everyone else <1pp.
+const THIN_PRIOR_SIGMA = { sunderland: 1.15, leeds: 1.15 };
+
 function teamSigma(id) {
-  const m = PROMOTED_SIGMA[id] || 1.0;
+  const m = PROMOTED_SIGMA[id] || THIN_PRIOR_SIGMA[id] || 1.0;
   return { form: SIGMA_FORM * m, ind: SIGMA_IND * m };
 }
 
