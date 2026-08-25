@@ -11,9 +11,17 @@ Three questions, in the order that matters:
             attacking metrics, conceded for defensive ones)? Repeatable and
             useless is a real combination — possession repeats at 0.86 and
             forecasts almost nothing.
-  ADDS      does it still predict once shot volume is accounted for? The
-            model already knows shots for and against. A metric only earns a
-            place in the simulation if it survives that control.
+  ADDS      does it still predict once THE COMPOSITE is accounted for?
+
+The control on that third column matters more than it looks. An earlier
+version residualised on shot volume alone, which flattered everything:
+production is not a shots model, it is an eight-stat composite, so "adds
+beyond shots" is a far easier test than "adds beyond what the model already
+has". Three metrics scored ≥0.30 against the shot control and were then
+rejected by prior_backtest — box-touch share, block rate and big-chance rate
+allowed — because their information was already inside the composite.
+Controlling on the composite's own prediction makes this column mean what it
+claims to.
 
 Only the third column justifies changing the model. The first two are
 context for reading the page.
@@ -66,16 +74,35 @@ def team_halves():
     return out
 
 
+def _composite_control(halves, keys):
+    """
+    The composite z-index built from each team's FIRST half — i.e. exactly the
+    signal production already extracts. Anything a candidate metric explains
+    on top of this is genuinely new; anything it doesn't was already known.
+    """
+    from prior_backtest import COMPOSITE_STATS
+
+    def index(side):
+        zs = []
+        for stat in COMPOSITE_STATS:
+            xs = [halves[k][0][side].get(stat, 0.0) for k in keys]
+            mu = _mean(xs)
+            sd = (_mean([(x - mu) ** 2 for x in xs])) ** 0.5 or 1.0
+            zs.append([(x - mu) / sd for x in xs])
+        return [_mean([z[i] for z in zs]) for i in range(len(keys))]
+
+    return index(0), index(1)      # 0 = own stats (attack), 1 = opponent (defence)
+
+
 def main():
     halves = team_halves()
     keys = sorted(halves)
     print(f"{len(keys)} team-seasons across {', '.join(SEASONS)}\n")
 
-    # Second-half outcomes and the shot-volume control.
+    # Second-half outcomes, and the control: what the composite already knows.
     h2_gf = [halves[k][1][2] for k in keys]
     h2_ga = [halves[k][1][3] for k in keys]
-    ctrl_for = [halves[k][0][0].get("total_scoring_att", 0.0) for k in keys]
-    ctrl_ag  = [halves[k][0][1].get("total_scoring_att", 0.0) for k in keys]
+    ctrl_for, ctrl_ag = _composite_control(halves, keys)
 
     def residual(y, x):
         """y with the linear effect of x removed."""
@@ -109,26 +136,29 @@ def main():
                         "Defensive actions per opponent final-third entry",
                         "Clearances per opponent box touch")
         target = [p[3] for p in pairs] if defensive else [p[2] for p in pairs]
-        ctrl   = [p[5] for p in pairs] if defensive else [p[4] for p in pairs]
+        ctrl   = [p[5] for p in pairs] if defensive else [p[4] for p in pairs]  # composite index
         sign   = -1 if defensive else 1
         if lower_better:
             sign *= -1
 
         repeats  = _corr(x, y)
         predicts = _corr(x, target) * sign
-        # Same correlation, but on the part of the outcome shot volume cannot
-        # explain, and on the part of the metric shot volume cannot explain.
+        # Same correlation, but on the parts of metric and outcome that the
+        # composite cannot already explain.
         adds = _corr(residual(x, ctrl), residual(target, ctrl)) * sign
         rows.append((name, group, repeats, predicts, adds, len(pairs)))
 
     rows.sort(key=lambda r: -abs(r[4]))
-    print(f"{'metric':<44}{'repeats':>9}{'predicts':>10}{'adds':>8}")
+    print(f"{'metric':<44}{'repeats':>9}{'predicts':>10}{'adds*':>8}")
     print("-" * 71)
     for name, group, rep, pred, adds, n in rows:
         star = " ★" if abs(adds) >= 0.25 and abs(rep) >= 0.35 else ""
         print(f"{name[:43]:<44}{rep:>9.2f}{pred:>10.2f}{adds:>8.2f}{star}")
-    print("\n★ = repeats AND still predicts after shot volume is controlled for")
-    print("   (candidates for the simulation; everything else is descriptive)")
+    print("\n*adds = correlation with second-half goals AFTER removing what the")
+    print(" eight-stat composite already predicts. Not 'beyond shots' — beyond the")
+    print(" actual model, which is a much higher bar.")
+    print("★ = repeats AND still adds. Candidates only; prior_backtest across all")
+    print("  three folds decides.")
 
 
 if __name__ == "__main__":
