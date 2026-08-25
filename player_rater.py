@@ -280,6 +280,82 @@ def rate(players: list[dict], target_team: str = "hull", season: str = "2627",
     return out
 
 
+# ── Per-opportunity player metrics ────────────────────────────────────────
+# Counting stats mostly measure how much a player was involved. These divide
+# each one by the involvement that produced it, so a full-back who touches the
+# ball 90 times is not automatically ahead of one who touches it 40. Every
+# metric applies to every outfield position — a centre-back's shot rate is as
+# legitimate a number as a striker's, it is just smaller.
+#
+# `pct` marks a ratio that is already a percentage; `neg` marks one where a
+# high value is worse.
+PLAYER_DERIVED = [
+    ("Touches / 90",            lambda s: _rate(s.get("touches"), s.get("minutes"), 90), {}),
+    ("Pass completion %",       lambda s: s.get("passPct"), {"pct": True}),
+    ("Poss. lost / 100 touches", lambda s: _ratio(s.get("possLost"), s.get("touches"), 100), {"neg": True}),
+    ("Duel win %",              lambda s: _ratio(s.get("duelsWon"),
+                                                 (s.get("duelsWon") or 0) + (s.get("duelsLost") or 0), 100), {"pct": True}),
+    ("Aerial win %",            lambda s: _ratio(s.get("aerialsWon"),
+                                                 (s.get("aerialsWon") or 0) + (s.get("aerialsLost") or 0), 100), {"pct": True}),
+    ("Tackle success %",        lambda s: s.get("tacklePct"), {"pct": True}),
+    ("Clearances / 100 touches", lambda s: _ratio(s.get("totalClearance"), s.get("touches"), 100), {}),
+    ("Ball wins / 100 touches", lambda s: _ratio((s.get("interceptions") or 0) + (s.get("ballRecoveries") or 0),
+                                                 s.get("touches"), 100), {}),
+    ("Shots / 100 touches",     lambda s: _ratio(s.get("totalShots"), s.get("touches"), 100), {}),
+    ("Box touches / 100 touches", lambda s: _ratio(s.get("touchesInOppBox"), s.get("touches"), 100), {}),
+    ("Chances / 100 passes",    lambda s: _ratio(s.get("shotAssists"), s.get("accuratePasses"), 100), {}),
+    ("Goals / 10 shots on target", lambda s: _ratio(s.get("totalGoals"), s.get("shotsOnTarget"), 10), {}),
+]
+
+
+def _rate(num, mins, per):
+    if num is None or not mins:
+        return None
+    return round(float(num) / mins * per, 2)
+
+
+def _ratio(num, den, scale):
+    if num is None or not den:
+        return None
+    return round(float(num) / float(den) * scale, 2)
+
+
+def player_derived(players: list[dict], target_team: str = "hull") -> dict:
+    """
+    Per-opportunity ratios for a team's players, with each value's percentile
+    against league peers IN THE SAME POSITION so the numbers are comparable.
+    """
+    by_pos = {}
+    for p in players:
+        if (p.get("stats", {}).get("minutes") or 0) > 0:
+            by_pos.setdefault(p.get("pos"), []).append(p)
+
+    rows = []
+    for p in players:
+        if p.get("team") != target_team or (p.get("stats", {}).get("minutes") or 0) <= 0:
+            continue
+        peers = by_pos.get(p.get("pos"), [])
+        vals, pcts = {}, {}
+        for name, fn, opts in PLAYER_DERIVED:
+            v = fn(p["stats"])
+            vals[name] = v
+            pool = [fn(q["stats"]) for q in peers]
+            pct = _percentile(v, pool)
+            if opts.get("neg"):
+                pct = 100 - pct
+            pcts[name] = round(pct) if v is not None else None
+        rows.append({
+            "id": p.get("id"), "name": p.get("name"), "pos": p.get("pos"),
+            "shirt": p.get("shirt"), "minutes": p["stats"].get("minutes"),
+            "values": vals, "pcts": pcts, "peers": len(peers),
+        })
+    rows.sort(key=lambda r: -(r["minutes"] or 0))
+    return {
+        "players": rows,
+        "metrics": [{"name": n, **o} for n, _f, o in PLAYER_DERIVED],
+    }
+
+
 if __name__ == "__main__":
     import argparse
     from pl_players import fetch as fetch_pl

@@ -51,8 +51,8 @@ METRICS = [
     ("xG conceded per shot faced", "Chance suppression",
      "Chance quality per attempt, using the project's shots-based xG proxy — "
      "strips out how MANY shots were faced and asks how good they were.", True,
-     lambda s, o, gf, ga: _safe(0.33 * _g(o, "ontarget_scoring_att")
-                                - 0.01 * (_g(o, "total_scoring_att") - _g(o, "ontarget_scoring_att")),
+     lambda s, o, gf, ga: _safe(max(0.0, 0.33 * _g(o, "ontarget_scoring_att")
+                                - 0.01 * (_g(o, "total_scoring_att") - _g(o, "ontarget_scoring_att"))),
                                 _g(o, "total_scoring_att"))),
     ("Block rate", "Chance suppression",
      "Opponent shots blocked, as a share of shots faced — bodies in the way.", False,
@@ -61,6 +61,55 @@ METRICS = [
      "The rate version of 'big chances against'. Unlike per-goal-conceded it is "
      "always defined, and measures suppression rather than goalkeeping luck.", True,
      lambda s, o, gf, ga: _safe(_g(o, "big_chance_created") * 100, _g(o, "total_scoring_att"))),
+    ("Clearances per opponent box touch", "Chance suppression",
+     "How much clearing work each touch in your box costs the defence. Raw "
+     "clearance counts just say the opposition was camped there; this says what "
+     "happened once they arrived.", False,
+     lambda s, o, gf, ga: _safe(_g(s, "total_clearance"), _g(o, "touches_in_opp_box"))),
+    ("Goals conceded per shot on target", "Chance suppression",
+     "Keeping and luck, isolated from volume. Shown for completeness — this is "
+     "the axis measured at r=0.038 repeatability, so expect it to regress.", True,
+     lambda s, o, gf, ga: _safe(ga, _g(o, "ontarget_scoring_att"))),
+
+    # ── Per-opportunity: the point is the DENOMINATOR ──────────────────
+    ("Claims per 100 crosses faced", "Per opportunity",
+     "Goalkeeper command of the box, per chance to show it. Hull face roughly "
+     "double the league's crosses, so raw claim counts flatter them and raw "
+     "clean sheets do not tell you who dealt with the pressure.", False,
+     lambda s, o, gf, ga: _safe((_g(s, "total_high_claim") + _g(s, "punches")) * 100,
+                                _g(o, "total_cross"))),
+    ("Save percentage", "Per opportunity",
+     "Shots stopped as a share of shots that had to be stopped. Uses "
+     "saves/(saves+conceded) rather than saves/on-target: Opta's save and "
+     "on-target definitions are not strictly complementary, so the latter can "
+     "exceed 100%.", False,
+     lambda s, o, gf, ga: _safe(_g(s, "saves") * 100, _g(s, "saves") + ga)),
+    ("Aerials won per 10 crosses faced", "Per opportunity",
+     "Whether a side that invites crosses actually wins the header when it comes.", False,
+     lambda s, o, gf, ga: _safe(_g(s, "aerial_won") * 10, _g(o, "total_cross"))),
+    ("Defensive actions per opponent final-third entry", "Per opportunity",
+     "How hard the opposition has to work per arrival in your third. High means "
+     "an engaged block; low means they walk through it.", False,
+     lambda s, o, gf, ga: _safe(_g(s, "won_tackle") + _g(s, "interception")
+                                + _g(s, "total_clearance") + _g(s, "outfielder_block"),
+                                _g(o, "final_third_entries"))),
+    ("Shots per 10 touches in opposition box", "Per opportunity",
+     "Whether getting into the box turns into an attempt, or dies there.", False,
+     lambda s, o, gf, ga: _safe(_g(s, "total_scoring_att") * 10, _g(s, "touches_in_opp_box"))),
+    ("Goals per 10 shots on target", "Per opportunity",
+     "Finishing per real chance. Like its defensive twin this is the luck axis — "
+     "included so it can be seen regressing rather than mistaken for skill.", False,
+     lambda s, o, gf, ga: _safe(gf * 10, _g(s, "ontarget_scoring_att"))),
+    ("Chances created per 100 final-third passes", "Per opportunity",
+     "Productivity of territory. A side can pass endlessly in the final third "
+     "and create nothing — Coventry reached it more often than Hull and managed "
+     "a fifth as many box shots.", False,
+     lambda s, o, gf, ga: _safe(_g(s, "total_att_assist") * 100,
+                                _g(s, "total_final_third_passes"))),
+    ("Crosses faced per game", "Per opportunity",
+     "The denominator itself, shown so the ratios above can be read in context. "
+     "Not good or bad on its own — it describes how a side is being attacked.", False,
+     lambda s, o, gf, ga: _g(o, "total_cross")),
 
     # ── Engagement ────────────────────────────────────────────────────
     ("Ground duel win %", "Engagement",
@@ -125,7 +174,10 @@ METRICS = [
      lambda s, o, gf, ga: _g(s, "error_lead_to_shot")),
 ]
 
-GROUPS = ["Chance suppression", "Engagement", "Value from the ball", "Territory & risk"]
+PER_GAME = {"Errors leading to a shot per game", "Crosses faced per game"}
+
+GROUPS = ["Per opportunity", "Chance suppression", "Engagement",
+          "Value from the ball", "Territory & risk"]
 
 
 def compute(season: str = "2627") -> dict:
@@ -162,7 +214,8 @@ def compute(season: str = "2627") -> dict:
                 v = fn(a["own"], a["opp"], a["gf"], a["ga"])
             except Exception:
                 v = None
-            if v is not None and name == "Errors leading to a shot per game":
+            # Metrics expressed per GAME are summed above, so divide out here.
+            if v is not None and name in PER_GAME:
                 v = v / max(a["games"], 1)
             vals[name] = None if v is None else round(v, 2)
         teams[tid] = {"games": a["games"], "values": vals}

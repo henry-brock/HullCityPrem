@@ -141,7 +141,8 @@ def rate_players():
     force  = request.args.get("force") == "1"
     try:
         from pl_players import fetch as fetch_pool
-        from player_rater import CONCEPTS_GK, CONCEPTS_OUT, WEIGHTS, rate
+        from player_rater import (CONCEPTS_GK, CONCEPTS_OUT, WEIGHTS, rate,
+                                  player_derived)
 
         pool = fetch_pool(season=season, force=force)["players"]
         rows = rate(pool, target_team=team, season=season)
@@ -149,6 +150,7 @@ def rate_players():
             "season":  season,
             "team":    team,
             "players": rows,
+            "derived": player_derived(pool, target_team=team),
             "pool":    sum(1 for p in pool if (p.get("stats") or {}).get("minutes", 0) > 0),
             "concepts": {
                 "G": list(CONCEPTS_GK),
