@@ -111,6 +111,45 @@ METRICS = [
      "Not good or bad on its own — it describes how a side is being attacked.", False,
      lambda s, o, gf, ga: _g(o, "total_cross")),
 
+    # ── Territory control ─────────────────────────────────────────────
+    ("Field tilt", "Territory control",
+     "Share of all final-third touches in the match that were yours. Where the "
+     "game was actually played, independent of who held the ball in midfield.", False,
+     lambda s, o, gf, ga: _safe(_g(s, "touches_in_final_third") * 100,
+                                _g(s, "touches_in_final_third") + _g(o, "touches_in_final_third"))),
+    ("Box-touch share", "Territory control",
+     "Share of all penalty-area touches that were yours — field tilt at its "
+     "sharpest end.", False,
+     lambda s, o, gf, ga: _safe(_g(s, "touches_in_opp_box") * 100,
+                                _g(s, "touches_in_opp_box") + _g(o, "touches_in_opp_box"))),
+    ("Recovery height", "Territory control",
+     "Share of possession wins that happened in the attacking third. High means "
+     "turnovers are won near the opponent's goal, not scrambled clear of yours.", False,
+     lambda s, o, gf, ga: _safe(_g(s, "poss_won_att_3rd") * 100,
+                                _g(s, "poss_won_att_3rd") + _g(s, "poss_won_mid_3rd")
+                                + _g(s, "poss_won_def_3rd"))),
+    ("Opponent pass completion allowed", "Territory control",
+     "How comfortable the opposition were in possession. Low suggests pressure "
+     "is actually disrupting them rather than just chasing.", True,
+     lambda s, o, gf, ga: _safe(_g(o, "accurate_pass") * 100, _g(o, "total_pass"))),
+
+    # ── Chance quality created ────────────────────────────────────────
+    ("Own shots from inside the box", "Chance quality",
+     "Share of your shots taken inside the area. The single cheapest proxy for "
+     "whether a side manufactures good chances or settles for hopeful ones.", False,
+     lambda s, o, gf, ga: _safe(_g(s, "attempts_ibox") * 100,
+                                _g(s, "attempts_ibox") + _g(s, "attempts_obox"))),
+    ("Big chances created per 100 shots", "Chance quality",
+     "How many of your attempts were genuinely good ones.", False,
+     lambda s, o, gf, ga: _safe(_g(s, "big_chance_created") * 100, _g(s, "total_scoring_att"))),
+    ("Shot accuracy", "Chance quality",
+     "Share of your shots on target — partly technique, partly chance quality.", False,
+     lambda s, o, gf, ga: _safe(_g(s, "ontarget_scoring_att") * 100, _g(s, "total_scoring_att"))),
+    ("Set-piece shots conceded share", "Chance quality",
+     "Share of the shots you face that come from dead balls. A specific, "
+     "coachable weakness if it runs high.", True,
+     lambda s, o, gf, ga: _safe(_g(o, "att_setpiece") * 100, _g(o, "total_scoring_att"))),
+
     # ── Engagement ────────────────────────────────────────────────────
     ("Ground duel win %", "Engagement",
      "Duels won excluding aerials. Isolates willingness to engage from physique — "
@@ -176,8 +215,9 @@ METRICS = [
 
 PER_GAME = {"Errors leading to a shot per game", "Crosses faced per game"}
 
-GROUPS = ["Per opportunity", "Chance suppression", "Engagement",
-          "Value from the ball", "Territory & risk"]
+GROUPS = ["Per opportunity", "Chance suppression", "Chance quality",
+          "Territory control", "Engagement", "Value from the ball",
+          "Territory & risk"]
 
 
 def compute(season: str = "2627") -> dict:
