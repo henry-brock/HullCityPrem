@@ -1247,6 +1247,17 @@
       color: #fff; font-weight: 700; font-size: 0.68rem;
     }
 
+    .ac-tiles {
+      display: grid; gap: 10px; margin-bottom: 14px;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); max-width: 700px;
+    }
+    .ac-tile {
+      background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 8px; padding: 12px 14px;
+    }
+    .ac-v { font-size: 1.3rem; font-weight: 800; color: #e0e0e0; font-variant-numeric: tabular-nums; }
+    .ac-l { font-size: 0.66rem; color: var(--text-secondary); margin-top: 2px; }
+
     .ts-note-sm {
       font-size: 0.72rem; color: var(--text-secondary);
       margin: -4px 0 12px; line-height: 1.5; max-width: 780px;
@@ -1553,6 +1564,17 @@
   </section>
 
   <!-- ═══ SIMULATE TAB ═══ -->
+  <!-- ═══ MODEL ACCURACY ═══ -->
+  <section id="tab-accuracy" class="section">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Model Accuracy — has it actually been right?</span>
+        <span id="ac-meta" style="font-size:0.75rem;color:var(--text-secondary)"></span>
+      </div>
+      <div id="ac-body"><div class="sa-empty">Scoring every prediction…</div></div>
+    </div>
+  </section>
+
   <section id="tab-simulate" class="section">
 
     <!-- Notice banner -->
@@ -2636,7 +2658,8 @@ const TAB_GROUPS = {
   matchweek: [['matchweek',     'Fixtures'],
               ['results',       'Enter Result']],
   simulate:  [['simulate',      'Run & Projection'],
-              ['relegation',    'League Odds']],
+              ['relegation',    'League Odds'],
+              ['accuracy',      'Model Accuracy']],
   squad:     [['planalysis',    'Premier League 26/27'],
               ['champanalysis', 'Championship 25/26']],
   analytics: [['styles',        'Styles'],
@@ -2660,6 +2683,7 @@ const TAB_INIT = {
   xgtable:       () => renderXGTable(),
   teamstats:     () => loadTeamStats(),
   derived:       () => loadDerived(),
+  accuracy:      () => renderAccuracy(),
   settings:      () => renderSettings(),
   nextmatch:     () => initNextMatch(),
 };
@@ -3296,6 +3320,159 @@ function renderPlayerRater() {
         columns but clearances into 4 — averaging raw stats would weight passing eight times more
         by accident. Concept weights are a judgement call, and the honest thing to argue about.
       </div>
+    </div>`;
+}
+
+// ═══════════════════════════════════════════════════
+// MODEL ACCURACY — score every prediction after the fact
+// ═══════════════════════════════════════════════════
+// Nothing is stored at prediction time. Every played fixture is re-predicted
+// from ONLY the results that preceded it (_resultsBefore), which is the same
+// reconstruction the full-time panel uses, so these are honest out-of-sample
+// numbers rather than the model marking its own homework after the fact.
+function _accuracyRows() {
+  const idx = _fixtureIndex();
+  const played = STATE.results
+    .filter(r => idx[r.homeId + ':' + r.awayId] !== undefined)
+    .sort((a, b) => idx[a.homeId + ':' + a.awayId] - idx[b.homeId + ':' + b.awayId]);
+
+  return played.map(r => {
+    const key = r.homeId + ':' + r.awayId;
+    const p = predictFixture(r.homeId, r.awayId, _resultsBefore(key));
+    const outcome = r.homeGoals > r.awayGoals ? 'H'
+                  : r.homeGoals === r.awayGoals ? 'D' : 'A';
+    const probs = { H: p.winPct / 100, D: p.drawPct / 100, A: p.lossPct / 100 };
+    const tot = probs.H + probs.D + probs.A || 1;
+    ['H', 'D', 'A'].forEach(k => probs[k] /= tot);
+    const pAct = Math.max(1e-6, probs[outcome]);
+    // Brier over the three outcomes, the multi-class form.
+    const brier = ['H', 'D', 'A'].reduce((s, k) =>
+      s + Math.pow(probs[k] - (k === outcome ? 1 : 0), 2), 0);
+    return { r, key, probs, outcome, pAct, brier,
+             mw: Math.floor(idx[key] / 10) + 1 };
+  });
+}
+
+function renderAccuracy() {
+  const body = document.getElementById('ac-body');
+  const meta = document.getElementById('ac-meta');
+  const rows = _accuracyRows();
+  if (!rows.length) {
+    meta.textContent = '';
+    body.innerHTML = `<div class="sa-empty">No results yet — accuracy appears once matches are played.</div>`;
+    return;
+  }
+
+  const n = rows.length;
+  const logloss = rows.reduce((s, x) => s - Math.log(x.pAct), 0) / n;
+  const brier   = rows.reduce((s, x) => s + x.brier, 0) / n;
+
+  // No-skill baseline: predict every match with the league's long-run base
+  // rate, measured over the 1,140 matches of 2023/24–2025/26.
+  //
+  // It must NOT be fitted to the matches being scored. Doing that early in a
+  // season makes the "no-skill" baseline a model tuned on the very results it
+  // is judging — with 10 games it looked like the model was 22% WORSE than
+  // knowing nothing, which was an artefact, not a finding.
+  const BASE_RATE = { H: 0.4316, D: 0.2447, A: 0.3237 };
+  const floorLL = rows.reduce((s, x) => s - Math.log(BASE_RATE[x.outcome]), 0) / n;
+  const skill = floorLL > 0 ? (floorLL - logloss) / floorLL * 100 : 0;
+
+  // Calibration: bucket every individual outcome probability, then compare the
+  // average forecast in each bucket with how often it actually happened.
+  const buckets = [[0,.1],[.1,.2],[.2,.3],[.3,.4],[.4,.5],[.5,.6],[.6,.8],[.8,1.01]];
+  const cal = buckets.map(([lo, hi]) => ({ lo, hi, pred: 0, hit: 0, n: 0 }));
+  rows.forEach(x => ['H','D','A'].forEach(k => {
+    const b = cal.find(c => x.probs[k] >= c.lo && x.probs[k] < c.hi);
+    if (b) { b.n++; b.pred += x.probs[k]; b.hit += (x.outcome === k ? 1 : 0); }
+  }));
+
+  const nm = id => (teamMap[id] || {}).short || id;
+  const surprises = [...rows].sort((a, b) => a.pAct - b.pAct).slice(0, 6);
+
+  // Per-team bias: actual points minus what the model expected them to take.
+  const bias = {};
+  rows.forEach(x => {
+    const exp = { H: [3, 0], D: [1, 1], A: [0, 3] };
+    ['H','D','A'].forEach(k => {
+      bias[x.r.homeId] = (bias[x.r.homeId] || 0) - x.probs[k] * exp[k][0];
+      bias[x.r.awayId] = (bias[x.r.awayId] || 0) - x.probs[k] * exp[k][1];
+    });
+    const got = exp[x.outcome];
+    bias[x.r.homeId] += got[0];
+    bias[x.r.awayId] += got[1];
+  });
+  const biasRows = Object.entries(bias).sort((a, b) => b[1] - a[1]);
+
+  meta.textContent = `${n} match${n === 1 ? '' : 'es'} scored · out-of-sample`;
+  const thin = n < 40;
+
+  body.innerHTML = `
+    <div style="padding:0 16px 18px">
+      ${thin ? `<div class="ts-warn">⚠ Only ${n} matches scored. Log-loss needs 50+ before it
+        means much, and calibration needs several hundred. Treat everything here as provisional.</div>` : ''}
+      <div class="ac-tiles">
+        <div class="ac-tile"><div class="ac-v">${logloss.toFixed(4)}</div><div class="ac-l">model log-loss</div></div>
+        <div class="ac-tile"><div class="ac-v">${floorLL.toFixed(4)}</div><div class="ac-l">no-skill floor</div></div>
+        <div class="ac-tile"><div class="ac-v" style="color:${skill > 0 ? '#00ff85' : '#ff4d5e'}">${skill >= 0 ? '+' : ''}${skill.toFixed(1)}%</div><div class="ac-l">skill vs floor</div></div>
+        <div class="ac-tile"><div class="ac-v">${brier.toFixed(3)}</div><div class="ac-l">Brier score</div></div>
+      </div>
+      <div class="pr-note">
+        Each match is re-predicted using <strong>only the results that came before it</strong>, so these are
+        genuine out-of-sample scores. <strong>Log-loss</strong> punishes confident errors — lower is better,
+        and the floor is what you would get knowing nothing but the league's base rates.
+        <strong>Skill</strong> is how far the model beats that.
+      </div>
+
+      <div class="dv-sec-h">Calibration — when it says X%, does X% happen?</div>
+      <table class="pr-tbl" style="max-width:620px">
+        <thead><tr><th style="text-align:left">Forecast band</th><th>Predictions</th><th>Said</th><th>Happened</th><th>Gap</th></tr></thead>
+        <tbody>
+          ${cal.filter(b => b.n).map(b => {
+            const said = b.pred / b.n * 100, got = b.hit / b.n * 100, gap = got - said;
+            // A band holding a handful of forecasts can only land on 0% or
+            // 100%, so its "gap" is arithmetic rather than miscalibration.
+            const thinBand = b.n < 8;
+            const col = thinBand ? 'var(--text-secondary)'
+                      : Math.abs(gap) < 8 ? '#00ff85' : Math.abs(gap) < 18 ? '#F5A12D' : '#ff4d5e';
+            return `<tr${thinBand ? ' style="opacity:.5"' : ''}>
+              <td style="text-align:left">${(b.lo*100).toFixed(0)}–${(Math.min(b.hi,1)*100).toFixed(0)}%</td>
+              <td class="pr-dim">${b.n}</td><td>${said.toFixed(0)}%</td>
+              <td>${got.toFixed(0)}%</td>
+              <td style="color:${col};font-weight:700">${gap >= 0 ? '+' : ''}${gap.toFixed(0)}pp${thinBand ? ' <span style="font-weight:400;font-size:0.6rem">too few</span>' : ''}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+
+      <div class="dv-sec-h">Biggest surprises</div>
+      <table class="pr-tbl" style="max-width:620px">
+        <thead><tr><th style="text-align:left">Match</th><th>MW</th><th>Result</th><th>Model gave it</th></tr></thead>
+        <tbody>
+          ${surprises.map(x => `<tr>
+            <td style="text-align:left">${nm(x.r.homeId)} v ${nm(x.r.awayId)}</td>
+            <td class="pr-dim">${x.mw}</td>
+            <td>${x.r.homeGoals}–${x.r.awayGoals}</td>
+            <td style="color:${x.pAct < 0.15 ? '#ff4d5e' : '#F5A12D'};font-weight:700">${(x.pAct*100).toFixed(0)}%</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+
+      <div class="dv-sec-h">Where the priors look wrong <span>points above/below what the model expected</span></div>
+      <table class="pr-tbl" style="max-width:620px">
+        <thead><tr><th style="text-align:left">Over-performing</th><th>pts vs expected</th><th style="text-align:left">Under-performing</th><th>pts vs expected</th></tr></thead>
+        <tbody>
+          ${biasRows.slice(0, 5).map((hi, i) => {
+            const lo = biasRows[biasRows.length - 1 - i];
+            return `<tr>
+              <td style="text-align:left">${(teamMap[hi[0]]||{}).name||hi[0]}</td>
+              <td style="color:#00ff85;font-weight:700">+${hi[1].toFixed(1)}</td>
+              <td style="text-align:left">${(teamMap[lo[0]]||{}).name||lo[0]}</td>
+              <td style="color:#ff4d5e;font-weight:700">${lo[1].toFixed(1)}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
     </div>`;
 }
 
