@@ -1247,6 +1247,33 @@
       color: #fff; font-weight: 700; font-size: 0.68rem;
     }
 
+    .rv-six { display:grid; gap:6px; grid-template-columns:repeat(auto-fill,minmax(168px,1fr)); }
+    .rv-fx { display:flex; align-items:center; gap:6px; font-size:0.74rem;
+             background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07);
+             border-radius:6px; padding:6px 9px; }
+    .rv-fx-hull { border-color:rgba(245,161,45,0.45); background:rgba(245,161,45,0.07); }
+    .rv-mw { font-size:0.6rem; font-weight:800; color:var(--text-secondary); width:32px; flex-shrink:0; }
+
+    .sc-head { display:flex; gap:14px; align-items:center; margin-bottom:14px; }
+    .sc-name { font-size:1.15rem; font-weight:800; color:#e0e0e0; }
+    .sc-sub  { font-size:0.76rem; color:var(--text-secondary); margin-top:3px; display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+    .sc-form { margin-top:5px; display:flex; gap:3px; }
+    .sc-axes { display:grid; gap:8px; grid-template-columns:repeat(auto-fit,minmax(96px,1fr)); max-width:640px; margin-bottom:6px; }
+    .sc-axis { background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:7px; padding:8px 10px; }
+    .sc-axis-v { font-size:1rem; font-weight:800; color:#e0e0e0; }
+    .sc-axis-l { font-size:0.6rem; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.04em; }
+    .sc-cols { display:grid; gap:16px; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); }
+    .sc-list { display:grid; gap:3px; }
+    .sc-item { display:flex; align-items:center; gap:8px; font-size:0.74rem; padding:3px 0;
+               border-bottom:1px solid rgba(255,255,255,0.04); }
+    .sc-rank { width:30px; font-size:0.64rem; font-weight:800; flex-shrink:0; }
+    .sc-good { color:#00ff85; } .sc-bad { color:#ff4d5e; }
+    .sc-val { margin-left:auto; font-weight:700; font-variant-numeric:tabular-nums; }
+    .sc-none { font-size:0.74rem; color:var(--text-secondary); padding:6px 0; }
+    .sc-fix { background:rgba(255,255,255,0.025); border:1px solid rgba(255,255,255,0.07);
+              border-radius:8px; padding:11px 12px; }
+    .sc-fix-h { font-size:0.78rem; font-weight:800; color:#e0e0e0; }
+
     .ac-tiles {
       display: grid; gap: 10px; margin-bottom: 14px;
       grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); max-width: 700px;
@@ -1414,9 +1441,10 @@
   <button class="nav-btn"        data-tab="matchweek" onclick="showTab('matchweek')">Matchweek<span class="caret">▾</span></button>
   <span class="nav-div"></span>
   <button class="nav-btn"        data-tab="simulate"  onclick="showTab('simulate')">Simulate<span class="caret">▾</span></button>
-  <button class="nav-btn"        data-tab="survival"      onclick="showTab('survival')">Survival</button>
+  <button class="nav-btn"        data-tab="survival"      onclick="showTab('survival')">Survival<span class="caret">▾</span></button>
   <span class="nav-div"></span>
   <button class="nav-btn"        data-tab="nextmatch"   onclick="showTab('nextmatch')">Next Match</button>
+  <button class="nav-btn"        data-tab="scout"         onclick="showTab('scout')">Scout<span class="caret">▾</span></button>
   <span class="nav-div"></span>
   <button class="nav-btn"        data-tab="squad"         onclick="showTab('squad')">Squad<span class="caret">▾</span></button>
   <button class="nav-btn"        data-tab="analytics"     onclick="showTab('analytics')">Team Analytics<span class="caret">▾</span></button>
@@ -1564,6 +1592,30 @@
   </section>
 
   <!-- ═══ SIMULATE TAB ═══ -->
+  <!-- ═══ SCOUT ═══ -->
+  <section id="tab-scout" class="section">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title" id="sc-title">Opponent Scout</span>
+        <span id="sc-meta" style="font-size:0.75rem;color:var(--text-secondary)"></span>
+      </div>
+      <div id="sc-body"><div class="sa-empty">Loading scout report…</div></div>
+    </div>
+  </section>
+
+  <section id="tab-scoutpick" class="section">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Scout Any Team</span>
+        <select id="sc-pick" onchange="renderScout(this.value,'scoutpick')"
+                style="padding:6px 10px;font-size:0.82rem;background:rgba(255,255,255,0.06);
+                       border:1px solid rgba(255,255,255,0.15);border-radius:6px;
+                       color:var(--text);font-family:inherit"></select>
+      </div>
+      <div id="scp-body"><div class="sa-empty">Pick a team…</div></div>
+    </div>
+  </section>
+
   <!-- ═══ MODEL ACCURACY ═══ -->
   <section id="tab-accuracy" class="section">
     <div class="card">
@@ -1847,6 +1899,17 @@
   </section>
 
   <!-- ═══ HULL SURVIVAL ═══ -->
+  <!-- ═══ RIVAL TRACKER ═══ -->
+  <section id="tab-rivals" class="section">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Rival Tracker — the teams Hull are actually racing</span>
+        <span id="rv-meta" style="font-size:0.75rem;color:var(--text-secondary)"></span>
+      </div>
+      <div id="rv-body"><div class="sa-empty">Loading…</div></div>
+    </div>
+  </section>
+
   <section id="tab-survival" class="section">
     <div class="card" style="margin-bottom:20px">
       <div class="card-header" style="background:linear-gradient(90deg,#1a0a00,#3a1e00)">
@@ -2657,6 +2720,10 @@ const TAB_GROUPS = {
               ['xgtable',       'xG table']],
   matchweek: [['matchweek',     'Fixtures'],
               ['results',       'Enter Result']],
+  survival:  [['survival',      'Survival Watch'],
+              ['rivals',        'Rival Tracker']],
+  scout:     [['scout',         "Hull's Next Opponent"],
+              ['scoutpick',     'Scout Any Team']],
   simulate:  [['simulate',      'Run & Projection'],
               ['relegation',    'League Odds'],
               ['accuracy',      'Model Accuracy']],
@@ -2684,6 +2751,9 @@ const TAB_INIT = {
   teamstats:     () => loadTeamStats(),
   derived:       () => loadDerived(),
   accuracy:      () => renderAccuracy(),
+  scout:         () => loadScout('scout'),
+  scoutpick:     () => loadScout('scoutpick'),
+  rivals:        () => renderRivals(),
   settings:      () => renderSettings(),
   nextmatch:     () => initNextMatch(),
 };
@@ -3319,6 +3389,279 @@ function renderPlayerRater() {
         Concepts group related Opta stats before weighting, because Opta splits passing into ~33
         columns but clearances into 4 — averaging raw stats would weight passing eight times more
         by accident. Concept weights are a judgement call, and the honest thing to argue about.
+      </div>
+    </div>`;
+}
+
+// ═══════════════════════════════════════════════════
+// RIVAL TRACKER — the relegation race, and the games between them
+// ═══════════════════════════════════════════════════
+// Six-pointers are worth roughly double: a win against a rival takes three
+// points AND denies them three. Those fixtures are pulled out separately
+// because they move the survival maths more than anything else on the card.
+function renderRivals() {
+  const body = document.getElementById('rv-body');
+  const meta = document.getElementById('rv-meta');
+  if (!body) return;
+
+  const table = buildTable(STATE.results);
+  const played = playedSet();
+  const idx = _fixtureIndex();
+
+  // Who is actually in the race, judged by the MODEL rather than the current
+  // table. After one matchweek every side sits on 0-3 points, so slicing the
+  // standings pulled in Arsenal and Manchester City as "relegation rivals".
+  //
+  // Preference order: the survival simulation's relegation odds if it has been
+  // run, otherwise expected points from the priors. Both reflect what a team
+  // is, not what one weekend did to it. Hull are always included.
+  const played_n = Math.max(...table.map(r => r.p));
+  const rel = _survData && _survData.teams ? _survData.teams : null;
+  let risk;
+  if (rel) {
+    risk = t => rel[t.id] ? rel[t.id].rel : 0;
+  } else {
+    // Lower strength = likelier to go down. Blend in actual points once enough
+    // games exist for them to carry information.
+    const w = Math.min(1, played_n / 12);
+    risk = t => {
+      const row = table.find(r => r.id === t.id);
+      const ppg = row && row.p ? row.pts / row.p : 1.0;
+      return -(computeStrength(t.baseAtk, t.baseDef) * (1 - w) / 20 + ppg * w);
+    };
+  }
+  const ranked = [...TEAMS].sort((a, b) => risk(b) - risk(a));
+  const pick = ranked.slice(0, 8);
+  if (!pick.some(t => t.id === 'hull')) pick[pick.length - 1] = teamMap['hull'];
+  const ids = new Set(pick.map(t => t.id));
+  // Display them in current table order so the card still reads like a table.
+  const rivals = table.filter(r => ids.has(r.id));
+
+  const remaining = ALL_FIXTURES.filter(f => !played.has(f.homeId + ':' + f.awayId));
+  const runIn = id => {
+    const games = remaining.filter(f => f.homeId === id || f.awayId === id);
+    if (!games.length) return null;
+    const s = games.map(f => {
+      const opp = f.homeId === id ? f.awayId : f.homeId;
+      const t = teamMap[opp];
+      // Away games are harder, so the opponent's strength is nudged up.
+      return computeStrength(t.baseAtk, t.baseDef) * (f.homeId === id ? 1 : 1.06);
+    });
+    return { avg: s.reduce((a, b) => a + b, 0) / s.length, n: games.length };
+  };
+  const diffs = rivals.map(r => runIn(r.id)).filter(Boolean).map(d => d.avg);
+  const lo = Math.min(...diffs), hi = Math.max(...diffs);
+
+  // Remaining fixtures where BOTH teams are in the race.
+  const sixers = remaining
+    .filter(f => ids.has(f.homeId) && ids.has(f.awayId))
+    .map(f => ({ ...f, mw: Math.floor(idx[f.homeId + ':' + f.awayId] / 10) + 1,
+                 hull: f.homeId === 'hull' || f.awayId === 'hull' }))
+    .sort((a, b) => a.mw - b.mw);
+
+  meta.textContent = `${rivals.length} teams in the race · ${sixers.length} six-pointers left`
+    + (rel ? '' : ' · run Survival for relegation %');
+
+  body.innerHTML = `
+    <div style="padding:0 16px 18px">
+      <table class="pr-tbl" style="max-width:900px">
+        <thead><tr>
+          <th style="text-align:left">Team</th><th>Pl</th><th>Pts</th><th>GD</th><th>Form</th>
+          <th>Run-in</th><th>6-pointers left</th>${rel ? '<th>Relegation %</th>' : ''}
+        </tr></thead>
+        <tbody>
+          ${rivals.map(r => {
+            const d = runIn(r.id);
+            const norm = d && hi > lo ? (d.avg - lo) / (hi - lo) : 0.5;
+            const col = `hsl(${(1 - norm) * 120},70%,45%)`;   // green = easier run-in
+            const mine = sixers.filter(f => f.homeId === r.id || f.awayId === r.id).length;
+            const t = teamMap[r.id];
+            return `<tr${r.id === 'hull' ? ' style="background:rgba(245,161,45,0.08)"' : ''}>
+              <td style="text-align:left">
+                <span class="badge" style="background:${t.col};color:${t.txt};width:17px;height:17px;font-size:0.42rem;${_crest(t.id)}"></span>
+                <span style="margin-left:6px;${r.id === 'hull' ? 'color:#F5A12D;font-weight:800' : ''}">${t.name}</span>
+              </td>
+              <td class="pr-dim">${r.p}</td>
+              <td style="font-weight:800">${r.pts}</td>
+              <td class="pr-dim">${r.gf - r.ga >= 0 ? '+' : ''}${r.gf - r.ga}</td>
+              <td>${(r.form || []).slice(-5).map(f => `<span class="form-${f}">${f}</span>`).join('') || '—'}</td>
+              <td><span style="color:${col};font-weight:700">${d ? d.avg.toFixed(2) : '—'}</span></td>
+              <td>${mine}</td>
+              ${rel ? `<td style="font-weight:700;color:${(rel[r.id]?.rel ?? 0) > 40 ? '#ff4d5e' : (rel[r.id]?.rel ?? 0) > 15 ? '#F5A12D' : '#00ff85'}">${rel[r.id] ? rel[r.id].rel.toFixed(0) + '%' : '—'}</td>` : ''}
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+      <div class="pr-note" style="margin-top:12px">
+        <strong>Run-in</strong> is the average strength of remaining opponents, with away games weighted
+        up 6% — <span style="color:hsl(120,70%,45%)">green is easier</span>,
+        <span style="color:hsl(0,70%,45%)">red is harder</span>. Relegation % comes from the Survival
+        simulation; run it once and this fills in.
+      </div>
+
+      <div class="dv-sec-h">Six-pointers remaining
+        <span>both teams in the race${sixers.length > 12 ? ` · next 12 of ${sixers.length}` : ''}</span></div>
+      ${sixers.length ? `<div class="rv-six">${sixers.slice(0, 12).map(f => `
+        <div class="rv-fx${f.hull ? ' rv-fx-hull' : ''}">
+          <span class="rv-mw">MW${f.mw}</span>
+          <span>${(teamMap[f.homeId]||{}).short || f.homeId}</span>
+          <span class="pr-dim">v</span>
+          <span>${(teamMap[f.awayId]||{}).short || f.awayId}</span>
+        </div>`).join('')}</div>`
+        : '<div class="sc-none">None left between these teams.</div>'}
+      <div class="pr-note" style="margin-top:10px">
+        A win here is worth roughly double — three points taken and three denied. Hull's own are
+        highlighted; the rest are the games to watch on a weekend.
+      </div>
+    </div>`;
+}
+
+// ═══════════════════════════════════════════════════
+// SCOUT — profile one opponent and how Hull match up
+// ═══════════════════════════════════════════════════
+// Reuses everything already built: style fingerprints, derived-stat rankings
+// and the Dixon-Coles matrix. The point is to aim them at ONE team rather
+// than ranking the league, which is what Team Analytics already does.
+async function loadScout(which) {
+  const pick = document.getElementById('sc-pick');
+  if (pick && !pick.options.length) {
+    pick.innerHTML = TEAMS.filter(t => t.id !== 'hull')
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+  }
+  // Both sub-tabs need styles + derived; fetch once, reuse after.
+  if (!_stylesData) { try { _stylesData = (await (await fetch('/api/styles')).json()).teams || []; } catch (e) {} }
+  if (!_dvData)     { try { _dvData = await (await fetch('/api/derived?season=2627')).json(); } catch (e) {} }
+
+  if (which === 'scoutpick') {
+    renderScout(pick ? pick.value : 'manutd', 'scoutpick');
+  } else {
+    renderScout(_hullNextOpponent(), 'scout');
+  }
+}
+
+function _hullNextOpponent() {
+  const played = playedSet();
+  const f = ALL_FIXTURES.find(x => (x.homeId === 'hull' || x.awayId === 'hull')
+                                && !played.has(x.homeId + ':' + x.awayId));
+  if (!f) return 'manutd';
+  return f.homeId === 'hull' ? f.awayId : f.homeId;
+}
+
+function renderScout(teamId, which) {
+  const isPick = which === 'scoutpick';
+  const body = document.getElementById(isPick ? 'scp-body' : 'sc-body');
+  const t = teamMap[teamId];
+  if (!body || !t) return;
+
+  if (!isPick) {
+    const played = playedSet();
+    const f = ALL_FIXTURES.find(x => (x.homeId === 'hull' || x.awayId === 'hull')
+                                  && !played.has(x.homeId + ':' + x.awayId));
+    const home = f && f.homeId === 'hull';
+    document.getElementById('sc-title').textContent = `Scout — ${t.name}`;
+    document.getElementById('sc-meta').textContent = f
+      ? `Hull's next opponent · ${home ? 'home' : 'away'} · matchweek ${Math.floor(_fixtureIndex()[f.homeId + ':' + f.awayId] / 10) + 1}`
+      : 'no fixture remaining';
+  }
+
+  const style = (_stylesData || []).find(s => s.id === teamId);
+  const table = buildTable(STATE.results);
+  const row = table.find(r => r.id === teamId);
+  const pos = row ? table.indexOf(row) + 1 : null;
+
+  // Where this team sits on every derived metric, so strengths and weaknesses
+  // come from the same ranked data the Derived Stats page shows.
+  let strong = [], weak = [];
+  if (_dvData && _dvData.teams && _dvData.teams[teamId]) {
+    const ids = Object.keys(_dvData.teams);
+    (_dvData.metrics || []).forEach(m => {
+      const vals = ids.map(id => ({ id, v: _dvData.teams[id].values[m.name] }))
+                      .filter(r => r.v !== null && r.v !== undefined);
+      if (vals.length < 6) return;
+      vals.sort((a, b) => m.lowerBetter ? a.v - b.v : b.v - a.v);
+      const i = vals.findIndex(r => r.id === teamId);
+      if (i < 0) return;
+      const rank = i + 1, n = vals.length;
+      const entry = { name: m.name, rank, n, v: vals[i].v };
+      if (rank <= 3) strong.push(entry);
+      else if (rank > n - 3) weak.push(entry);
+    });
+    strong.sort((a, b) => a.rank - b.rank);
+    weak.sort((a, b) => (b.n - b.rank) - (a.n - a.rank));
+  }
+
+  // How Hull match up, at both venues.
+  const atHome = predictFixture('hull', teamId);
+  const away   = predictFixture(teamId, 'hull');
+  const form   = (row ? row.form : []).slice(-6);
+
+  body.innerHTML = `
+    <div style="padding:0 16px 18px">
+      <div class="sc-head">
+        <div class="badge" style="background:${t.col};color:${t.txt};width:44px;height:44px;font-size:0.8rem;flex-shrink:0;${_crest(t.id)}"></div>
+        <div>
+          <div class="sc-name">${t.name}</div>
+          <div class="sc-sub">
+            ${pos ? `${_ord(pos)} · ${row.pts} pts · GD ${row.gf - row.ga >= 0 ? '+' : ''}${row.gf - row.ga}` : 'no matches played'}
+            ${style ? ` · <span class="style-tag style-${style.style}">${style.style}</span>` : ''}
+            ${style && style.press ? ` <span class="press-tag press-${style.press.split(' ')[0]}">${style.press}</span>` : ''}
+          </div>
+          ${form.length ? `<div class="sc-form">${form.map(f => `<span class="form-${f}">${f}</span>`).join('')}</div>` : ''}
+        </div>
+      </div>
+
+      ${style ? `<div class="sc-axes">
+        ${[['Possession', style.poss + '%'], ['Pass acc', style.passAcc + '%'],
+           ['Directness', style.directness + '%'], ['Crosses/g', style.crosses],
+           ['PPDA', style.ppda ?? '—']].map(([l, v]) =>
+          `<div class="sc-axis"><div class="sc-axis-v">${v}</div><div class="sc-axis-l">${l}</div></div>`).join('')}
+      </div>` : ''}
+
+      <div class="sc-cols">
+        <div>
+          <div class="dv-sec-h">Strengths <span>top 3 in the league</span></div>
+          ${strong.length ? `<div class="sc-list">${strong.slice(0, 8).map(s =>
+            `<div class="sc-item"><span class="sc-rank sc-good">${_ord(s.rank)}</span>${s.name}
+             <span class="sc-val">${s.v}</span></div>`).join('')}</div>`
+            : '<div class="sc-none">Nothing in the league top 3 yet.</div>'}
+        </div>
+        <div>
+          <div class="dv-sec-h">Weaknesses <span>bottom 3 in the league</span></div>
+          ${weak.length ? `<div class="sc-list">${weak.slice(0, 8).map(s =>
+            `<div class="sc-item"><span class="sc-rank sc-bad">${_ord(s.rank)}</span>${s.name}
+             <span class="sc-val">${s.v}</span></div>`).join('')}</div>`
+            : '<div class="sc-none">Nothing in the league bottom 3 yet.</div>'}
+        </div>
+      </div>
+
+      <div class="dv-sec-h">How Hull match up</div>
+      <div class="sc-cols">
+        <div class="sc-fix">
+          <div class="sc-fix-h">Hull at home</div>
+          <div class="wdl-bar" style="margin:6px 0">
+            <div class="wdl-seg wdl-seg-w" style="flex:${atHome.winPct||0.1}">${atHome.winPct}%</div>
+            <div class="wdl-seg wdl-seg-d" style="flex:${atHome.drawPct||0.1}">${atHome.drawPct}%</div>
+            <div class="wdl-seg wdl-seg-l" style="flex:${atHome.lossPct||0.1}">${atHome.lossPct}%</div>
+          </div>
+          <div class="fx-meta"><strong>${atHome.likelyScore}</strong> most likely · xG ${atHome.hxg}–${atHome.axg}</div>
+          <div style="margin-top:8px">${scoreGridHTML('hull', teamId, true)}</div>
+        </div>
+        <div class="sc-fix">
+          <div class="sc-fix-h">Hull away</div>
+          <div class="wdl-bar" style="margin:6px 0">
+            <div class="wdl-seg wdl-seg-w" style="flex:${away.lossPct||0.1}">${away.lossPct}%</div>
+            <div class="wdl-seg wdl-seg-d" style="flex:${away.drawPct||0.1}">${away.drawPct}%</div>
+            <div class="wdl-seg wdl-seg-l" style="flex:${away.winPct||0.1}">${away.winPct}%</div>
+          </div>
+          <div class="fx-meta"><strong>${away.likelyScore}</strong> most likely · xG ${away.hxg}–${away.axg}</div>
+          <div style="margin-top:8px">${scoreGridHTML(teamId, 'hull', true)}</div>
+        </div>
+      </div>
+      <div class="pr-note" style="margin-top:12px">
+        Hull's bars always read <strong>win · draw · loss from Hull's point of view</strong>, so the two
+        panels are directly comparable. Strengths and weaknesses are this team's league rank on the same
+        derived ratios as the Derived Stats page — early in a season those ranks move a lot.
       </div>
     </div>`;
 }
