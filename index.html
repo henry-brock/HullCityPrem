@@ -1247,6 +1247,34 @@
       color: #fff; font-weight: 700; font-size: 0.68rem;
     }
 
+    .sc-pick {
+      display: grid; gap: 6px; padding: 12px 16px 14px;
+      grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+      background: rgba(255,255,255,0.02);
+      border-bottom: 1px solid rgba(255,255,255,0.07);
+    }
+    .sc-chip {
+      display: flex; align-items: center; gap: 7px; position: relative;
+      background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 8px; padding: 7px 9px; cursor: pointer;
+      font-family: inherit; color: var(--text-secondary); transition: all 0.14s;
+    }
+    .sc-chip:hover {
+      background: rgba(245,161,45,0.12); border-color: rgba(245,161,45,0.45);
+      color: #fff; transform: translateY(-1px);
+    }
+    .sc-chip.active {
+      background: rgba(245,161,45,0.18); border-color: #F5A12D; color: #F5A12D;
+      box-shadow: 0 0 0 1px rgba(245,161,45,0.35);
+    }
+    .sc-chip-n { font-size: 0.78rem; font-weight: 800; letter-spacing: 0.02em; }
+    .sc-chip-next {
+      position: absolute; top: -6px; right: -4px;
+      background: var(--pl-green); color: #06210f;
+      font-size: 0.5rem; font-weight: 800; text-transform: uppercase;
+      padding: 1px 4px; border-radius: 3px; letter-spacing: 0.04em;
+    }
+
     .rv-six { display:grid; gap:6px; grid-template-columns:repeat(auto-fill,minmax(168px,1fr)); }
     .rv-fx { display:flex; align-items:center; gap:6px; font-size:0.74rem;
              background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07);
@@ -1607,11 +1635,9 @@
     <div class="card">
       <div class="card-header">
         <span class="card-title">Scout Any Team</span>
-        <select id="sc-pick" onchange="renderScout(this.value,'scoutpick')"
-                style="padding:6px 10px;font-size:0.82rem;background:rgba(255,255,255,0.06);
-                       border:1px solid rgba(255,255,255,0.15);border-radius:6px;
-                       color:var(--text);font-family:inherit"></select>
+        <span id="scp-meta" style="font-size:0.75rem;color:var(--text-secondary)"></span>
       </div>
+      <div id="sc-pick" class="sc-pick"></div>
       <div id="scp-body"><div class="sa-empty">Pick a team…</div></div>
     </div>
   </section>
@@ -3522,19 +3548,40 @@ function renderRivals() {
 // Reuses everything already built: style fingerprints, derived-stat rankings
 // and the Dixon-Coles matrix. The point is to aim them at ONE team rather
 // than ranking the league, which is what Team Analytics already does.
+let _scoutPicked = null;
+
+// A crest grid rather than a dropdown: this is the page's main control, so it
+// should be visible and clickable at a glance instead of hidden in the header.
+function _renderScoutPicker() {
+  const wrap = document.getElementById('sc-pick');
+  if (!wrap) return;
+  const next = _hullNextOpponent();
+  if (!_scoutPicked) _scoutPicked = next;
+  const table = buildTable(STATE.results);
+  const order = TEAMS.filter(t => t.id !== 'hull').sort((a, b) => {
+    const ia = table.findIndex(r => r.id === a.id), ib = table.findIndex(r => r.id === b.id);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+  });
+  wrap.innerHTML = order.map(t => `
+    <button class="sc-chip${t.id === _scoutPicked ? ' active' : ''}"
+            onclick="_scoutPicked='${t.id}';_renderScoutPicker();renderScout('${t.id}','scoutpick')"
+            title="${t.name}">
+      <span class="badge" style="background:${t.col};color:${t.txt};width:20px;height:20px;font-size:0.46rem;flex-shrink:0;${_crest(t.id)}"></span>
+      <span class="sc-chip-n">${t.short}</span>
+      ${t.id === next ? '<span class="sc-chip-next" title="Hull play them next">next</span>' : ''}
+    </button>`).join('');
+  const meta = document.getElementById('scp-meta');
+  if (meta) meta.textContent = `${order.length} teams · in table order`;
+}
+
 async function loadScout(which) {
-  const pick = document.getElementById('sc-pick');
-  if (pick && !pick.options.length) {
-    pick.innerHTML = TEAMS.filter(t => t.id !== 'hull')
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map(t => `<option value="${t.id}">${t.name}</option>`).join('');
-  }
   // Both sub-tabs need styles + derived; fetch once, reuse after.
   if (!_stylesData) { try { _stylesData = (await (await fetch('/api/styles')).json()).teams || []; } catch (e) {} }
   if (!_dvData)     { try { _dvData = await (await fetch('/api/derived?season=2627')).json(); } catch (e) {} }
 
   if (which === 'scoutpick') {
-    renderScout(pick ? pick.value : 'manutd', 'scoutpick');
+    _renderScoutPicker();
+    renderScout(_scoutPicked || _hullNextOpponent(), 'scoutpick');
   } else {
     renderScout(_hullNextOpponent(), 'scout');
   }
