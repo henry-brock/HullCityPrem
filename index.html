@@ -4349,11 +4349,21 @@ function teamSigma(id) {
 
 let _mcResult = null;   // full sim output, reused by run-in / scenarios
 
-function runMC() {
-  // Adaptive sample size (#10): keep simulating until the Monte-Carlo standard
-  // error on every team's relegation probability falls below TARGET_SE, rather
-  // than a fixed count — more sims only where the probabilities are uncertain.
-  const MIN_N = 6000, MAX_N = 30000, CHECK = 2000, TARGET_SE = 0.004;
+let _mcBusy = false;
+
+async function runMC() {
+  if (_mcBusy) return;
+  _mcBusy = true;
+  // Fixed 100,000 simulations. A convergence test (mc_convergence.py) showed
+  // 10k → 100k barely moves the answer — at most 0.23pp — but tightens the
+  // run-to-run spread from ±0.41pp to ±0.14pp, so repeated runs now agree to
+  // the second decimal instead of drifting.
+  //
+  // At ~0.13ms per simulated season that is roughly 13 seconds, which is far
+  // too long to block on: the old version ran synchronously and would simply
+  // freeze the tab. It is therefore batched with a yield between chunks so the
+  // progress bar paints and the page stays alive.
+  const TOTAL = 100000, CHUNK = 5000;
   const posCount = {}, ptsSum = {}, ptsSqSum = {};
   TEAMS.forEach(t => {
     posCount[t.id] = new Array(21).fill(0);   // index 1..20
@@ -4403,23 +4413,26 @@ function runMC() {
   };
 
   // Antithetic variates (#4): each season-noise draw is used with +g and −g,
-  // halving the run-to-run wobble. Batches of CHECK, then test convergence.
+  // halving the run-to-run wobble.
+  const note = document.getElementById('rel-note');
+  const bar = () => document.getElementById('mc-prog');
+  if (note) note.innerHTML =
+    `Running <strong style="color:#F5A12D">${TOTAL.toLocaleString()}</strong> simulations…
+     <div style="margin:10px 0 0;max-width:340px;height:8px;background:rgba(255,255,255,0.08);
+                 border-radius:4px;overflow:hidden">
+       <div id="mc-prog" style="height:100%;width:0%;background:linear-gradient(90deg,#F5A12D,#00ff85);transition:width .15s"></div>
+     </div>`;
+
   let N = 0;
-  while (N < MAX_N) {
-    for (let s = 0; s < CHECK / 2; s++) {
+  while (N < TOTAL) {
+    const stop = Math.min(N + CHUNK, TOTAL);
+    while (N < stop) {
       const G = {};
       TEAMS.forEach(t => { G[t.id] = [gaussRand(), gaussRand(), gaussRand()]; });
       runOne(G, 1); runOne(G, -1); N += 2;
     }
-    if (N >= MIN_N) {
-      let maxSE = 0;
-      TEAMS.forEach(t => {
-        let r = 0; for (let p = 18; p <= 20; p++) r += posCount[t.id][p];
-        const pr = r / N, se = Math.sqrt(pr * (1 - pr) / N);
-        if (se > maxSE) maxSE = se;
-      });
-      if (maxSE < TARGET_SE) break;
-    }
+    if (bar()) bar().style.width = (N / TOTAL * 100).toFixed(0) + '%';
+    await new Promise(r => setTimeout(r, 0));   // yield so the bar paints
   }
   // Derive per-team summaries from the full position distribution.
   const sumRange = (id, lo, hi) => {
@@ -4469,7 +4482,7 @@ function runMC() {
 
   document.getElementById('rel-note').innerHTML =
     `Results from <strong style="color:#fff">${N.toLocaleString()} simulations</strong> ` +
-    `<span style="color:var(--text-secondary)">(adaptive: ran until ±${mcMargin}pp Monte-Carlo margin, antithetic)</span>. ` +
+    `<span style="color:var(--text-secondary)">(±${mcMargin}pp Monte-Carlo margin, antithetic variates)</span>. ` +
     `Teams in red have >50% probability of relegation. ` +
     `<em style="color:var(--text-secondary)">Correlated log-normal noise (promoted sides wider) + Dixon-Coles, tuned against 2025/26.</em>`;
 
@@ -4478,6 +4491,7 @@ function runMC() {
 
   drawRelChart(relData);
   drawLeagueOddsTable(leagueData);
+  _mcBusy = false;
   drawTrendChart();
 }
 
