@@ -4405,15 +4405,30 @@ function _chaosScore(tbl, expIdx) {
     if (e >= n - 3 && i === 0) risers++;     // projected bottom 3 → champions
     if (e < 3 && i >= n - 3) fallen++;       // projected top 3 → relegated
   }
-  // 80% of the projected bottom half climbing into the top half is the
-  // wholesale-inversion bonus; below that it scales gently so near-misses
-  // still beat a flat shuffle.
   const flip = swaps >= Math.ceil(half * 0.8);
-  const score = total
-              + (flip ? 250 : swaps * 12)
-              + risers * 600
-              + fallen * 600;
-  return { total, big, minOff, swaps, risers, fallen, flip, score };
+
+  // Two axes, deliberately COMBINED AS A PRODUCT rather than a sum.
+  //
+  // Flat additive bonuses drowned the chaos measure: at +600 a title flip was
+  // worth four times an entire season's displacement, so once a season landed
+  // one, how mad the rest of the table was stopped counting — a 128-
+  // displacement season beat a 142 one purely on the flip.
+  //
+  //   VARIETY — is the whole table churning? Half magnitude (how far teams
+  //             moved), half breadth (how MANY moved ≥5), so a few enormous
+  //             movers cannot fake a chaotic season on their own.
+  //   DRAMA   — the marquee reversals: a projected bottom-three champion, a
+  //             projected top-three relegation, the wholesale half-swap.
+  //
+  // Multiplying means a season needs both. Drama with a placid table scores
+  // little, and a genuinely wild table still competes without a headline flip.
+  const variety = (Math.min(total, 200) / 200) * 0.5 + (big / n) * 0.5;
+  const drama   = risers * 0.5 + fallen * 0.5 + (flip ? 0.4 : swaps * 0.04);
+  const score   = variety * (1 + drama);
+  return { total, big, minOff, swaps, risers, fallen, flip,
+           variety: Math.round(variety * 100) / 100,
+           drama:   Math.round(drama * 100) / 100,
+           score };
 }
 
 // The single strangest season the simulation stumbled into, ranked by that
@@ -4438,7 +4453,8 @@ function drawChaosTable() {
   const exp = _expIdxRun || {};
   const N = _mcResult ? _mcResult.N : 0;
   if (meta) meta.textContent =
-    `${c.big} teams ≥5 places out · displacement ${c.total} · 1 of ${N.toLocaleString()}`;
+    `variety ${c.variety} × drama ${c.drama} · ${c.big} teams ≥5 out · displacement ${c.total}`
+    + ` · 1 of ${N.toLocaleString()}`;
 
   // What earned this season the top score, so the ranking isn't a black box.
   const badges = [];
@@ -4457,9 +4473,11 @@ function drawChaosTable() {
         Out of ${N.toLocaleString()} simulated seasons this is the one that departed furthest from
         expectation — every result in it is something the model genuinely produced, just all at once.
         <strong>Δ</strong> is places above (+) or below (−) where that team was projected to finish.
-        Seasons are ranked by displacement <em>plus bonuses</em> — a heavy one for a projected
-        bottom-three side winning the title or a projected top-three side going down, and a smaller
-        one for 80% of the projected bottom half finishing in the top half.
+        Seasons are ranked on two axes multiplied together, so one cannot carry the other:
+        <strong>variety</strong> (how far teams moved and how many of them) and
+        <strong>drama</strong> (a projected bottom-three champion, a projected top-three relegation,
+        or 80% of the bottom half reaching the top half). A headline shock with an otherwise placid
+        table scores poorly, and a genuinely churning table still competes without one.
         <br><br>
         Worth saying plainly: <strong>every</strong> team being ≥5 places out is not achievable by
         sampling — over 100,000 seasons the best on record is every team ≥3 out, once. Twenty
