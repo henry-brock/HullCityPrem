@@ -1275,6 +1275,12 @@
       padding: 1px 4px; border-radius: 3px; letter-spacing: 0.04em;
     }
 
+    .chaos-badges { display:grid; gap:6px; margin-bottom:12px; max-width:640px; }
+    .chaos-badge {
+      display:flex; align-items:center; gap:9px; font-size:0.76rem;
+      border:1px solid; border-radius:7px; padding:7px 11px;
+    }
+
     .rv-six { display:grid; gap:6px; grid-template-columns:repeat(auto-fill,minmax(168px,1fr)); }
     .rv-fx { display:flex; align-items:center; gap:6px; font-size:0.74rem;
              background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07);
@@ -4376,8 +4382,42 @@ let _mcChaos = null, _fallbackChaos = null, _expIdxRun = {};
 //
 // Tunable constants are baked in at spawn time, so Settings changes are
 // picked up on the next run.
-// The single strangest season the simulation stumbled into, ranked by total
-// displacement from the expected order.
+// How entertaining a simulated season is, not merely how far it strayed.
+//
+// Total displacement alone rewards twenty teams shuffling a few places each,
+// which reads as noise. These bonuses favour the specific shapes that are fun:
+// the table turning over wholesale, and — weighted far more heavily — a team
+// projected for the cellar actually lifting the title, or one of the projected
+// top three going down.
+//
+// Defined once and injected into the workers via toString(), so the pool and
+// the in-page fallback score seasons identically.
+function _chaosScore(tbl, expIdx) {
+  const n = tbl.length, half = Math.floor(n / 2);
+  let total = 0, big = 0, minOff = 99, swaps = 0, risers = 0, fallen = 0;
+  for (let i = 0; i < n; i++) {
+    const e = expIdx[tbl[i].id];
+    const off = Math.abs(i - e);
+    total += off;
+    if (off >= 5) big++;
+    if (off < minOff) minOff = off;
+    if (e >= half && i < half) swaps++;      // projected bottom half → top half
+    if (e >= n - 3 && i === 0) risers++;     // projected bottom 3 → champions
+    if (e < 3 && i >= n - 3) fallen++;       // projected top 3 → relegated
+  }
+  // 80% of the projected bottom half climbing into the top half is the
+  // wholesale-inversion bonus; below that it scales gently so near-misses
+  // still beat a flat shuffle.
+  const flip = swaps >= Math.ceil(half * 0.8);
+  const score = total
+              + (flip ? 250 : swaps * 12)
+              + risers * 600
+              + fallen * 600;
+  return { total, big, minOff, swaps, risers, fallen, flip, score };
+}
+
+// The single strangest season the simulation stumbled into, ranked by that
+// score.
 //
 // Note on the brief: "every team at least 5 places out" is not reachable by
 // sampling. Measured over 100,000 seasons, the best any single season managed
@@ -4398,7 +4438,14 @@ function drawChaosTable() {
   const exp = _expIdxRun || {};
   const N = _mcResult ? _mcResult.N : 0;
   if (meta) meta.textContent =
-    `${c.big} teams ≥5 places out · total displacement ${c.total} · 1 of ${N.toLocaleString()}`;
+    `${c.big} teams ≥5 places out · displacement ${c.total} · 1 of ${N.toLocaleString()}`;
+
+  // What earned this season the top score, so the ranking isn't a black box.
+  const badges = [];
+  if (c.risers) badges.push(['👑', `${c.risers === 1 ? 'A team' : c.risers + ' teams'} projected bottom-3 won the title`, '#ffd700']);
+  if (c.fallen) badges.push(['💀', `${c.fallen === 1 ? 'A' : c.fallen} projected top-3 side went down`, '#ff4d5e']);
+  if (c.flip)   badges.push(['🔄', `${c.swaps}/10 of the projected bottom half finished in the top half`, '#c98bff']);
+  else if (c.swaps >= 5) badges.push(['↕', `${c.swaps}/10 of the projected bottom half climbed into the top half`, '#c98bff']);
 
   const movers = c.rows.map((r, i) => ({ ...r, pos: i + 1, off: (exp[r.id] ?? i) - i }))
                        .slice().sort((a, b) => Math.abs(b.off) - Math.abs(a.off));
@@ -4410,11 +4457,19 @@ function drawChaosTable() {
         Out of ${N.toLocaleString()} simulated seasons this is the one that departed furthest from
         expectation — every result in it is something the model genuinely produced, just all at once.
         <strong>Δ</strong> is places above (+) or below (−) where that team was projected to finish.
+        Seasons are ranked by displacement <em>plus bonuses</em> — a heavy one for a projected
+        bottom-three side winning the title or a projected top-three side going down, and a smaller
+        one for 80% of the projected bottom half finishing in the top half.
         <br><br>
         Worth saying plainly: <strong>every</strong> team being ≥5 places out is not achievable by
         sampling — over 100,000 seasons the best on record is every team ≥3 out, once. Twenty
         simultaneous upsets is a far stronger demand than any one of them.
       </div>
+      ${badges.length ? `<div class="chaos-badges">${badges.map(([icon, txt, col]) =>
+        `<div class="chaos-badge" style="border-color:${col}55;background:${col}12">
+           <span style="font-size:1rem">${icon}</span>
+           <span style="color:${col};font-weight:700">${txt}</span>
+         </div>`).join('')}</div>` : ''}
       <div style="font-size:0.8rem;color:#c98bff;font-weight:700;margin-bottom:8px">
         Headlines: ${top.map(m => `${(teamMap[m.id]||{}).name || m.id}
           ${m.off > 0 ? 'up' : 'down'} ${Math.abs(m.off)} to ${_ord(m.pos)}`).join(' &nbsp;·&nbsp; ')}
@@ -4485,6 +4540,7 @@ function _mcWorkerSource() {
     ${gaussRand.toString()}
     ${teamSigma.toString()}
     ${buildTable.toString()}
+    ${_chaosScore.toString()}
     onmessage = function (e) {
       const { n, base, played, unplayed, sigScale, expIdx } = e.data;
       // Wildest season seen: ranked by total displacement from the expected
@@ -4511,19 +4567,17 @@ function _mcWorkerSource() {
             awayGoals: poisson(Math.max(0.05, (a.atk / LEAGUE_AVG) * h.def * AWAY_ATK)) });
         }
         const tbl = buildTable(sim, true);
-        let total = 0, big = 0, minOff = 99;
-        tbl.forEach((row, i) => {
-          posCount[row.id][i + 1]++;
-          ptsSum[row.id] += row.pts;
-          ptsSqSum[row.id] += row.pts * row.pts;
-          const off = Math.abs(i - expIdx[row.id]);
-          total += off; if (off >= 5) big++; if (off < minOff) minOff = off;
-        });
-        if (!chaos || total > chaos.total) {
-          chaos = { total: total, big: big, minOff: minOff,
-                    rows: tbl.map(function (r) {
-                      return { id: r.id, pts: r.pts, gf: r.gf, ga: r.ga,
-                               w: r.w, d: r.d, l: r.l }; }) };
+        for (let i = 0; i < tbl.length; i++) {
+          posCount[tbl[i].id][i + 1]++;
+          ptsSum[tbl[i].id] += tbl[i].pts;
+          ptsSqSum[tbl[i].id] += tbl[i].pts * tbl[i].pts;
+        }
+        const sc = _chaosScore(tbl, expIdx);
+        if (!chaos || sc.score > chaos.score) {
+          chaos = Object.assign({}, sc, {
+            rows: tbl.map(function (r) {
+              return { id: r.id, pts: r.pts, gf: r.gf, ga: r.ga,
+                       w: r.w, d: r.d, l: r.l }; }) });
         }
       };
       let done = 0;
@@ -4571,7 +4625,7 @@ function _mcParallel(total, base, played, unplayed, sigScale, expIdx, onProgress
             acc.ptsSqSum[t.id] += d.ptsSqSum[t.id];
           });
           acc.N += d.done;
-          if (d.chaos && (!acc.chaos || d.chaos.total > acc.chaos.total)) acc.chaos = d.chaos;
+          if (d.chaos && (!acc.chaos || d.chaos.score > acc.chaos.score)) acc.chaos = d.chaos;
           w.terminate();
           if (++finished === shares.length) { URL.revokeObjectURL(url); resolve(acc); }
         };
@@ -4647,16 +4701,14 @@ async function runMC() {
         awayGoals: poisson(Math.max(0.05, axg)) });
     });
     const tbl = buildTable(simResults, true);
-    let total = 0, big = 0, minOff = 99;
     tbl.forEach((row, i) => {
       posCount[row.id][i + 1]++;
       ptsSum[row.id]   += row.pts;
       ptsSqSum[row.id] += row.pts * row.pts;
-      const off = Math.abs(i - _expIdxRun[row.id]);
-      total += off; if (off >= 5) big++; if (off < minOff) minOff = off;
     });
-    if (!_fallbackChaos || total > _fallbackChaos.total) {
-      _fallbackChaos = { total, big, minOff,
+    const sc = _chaosScore(tbl, _expIdxRun);
+    if (!_fallbackChaos || sc.score > _fallbackChaos.score) {
+      _fallbackChaos = { ...sc,
         rows: tbl.map(r => ({ id: r.id, pts: r.pts, gf: r.gf, ga: r.ga, w: r.w, d: r.d, l: r.l })) };
     }
   };
