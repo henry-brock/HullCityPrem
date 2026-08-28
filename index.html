@@ -4567,6 +4567,15 @@ function _mcWorkerSource() {
       const posCount = {}, ptsSum = {}, ptsSqSum = {};
       TEAMS.forEach(t => { posCount[t.id] = new Array(21).fill(0);
                            ptsSum[t.id] = 0; ptsSqSum[t.id] = 0; });
+      // Survival statistics gathered in the SAME pass: Hull's survival count,
+      // the 17th-place points distribution (the safety line) and, per
+      // remaining fixture, how often each outcome occurred and how often Hull
+      // survived when it did. Recording these here means the Survival tab no
+      // longer needs a second simulation of its own.
+      let survBase = 0, safetySum = 0;
+      const safetyHist = new Array(120).fill(0);
+      const acc = unplayed.map(function () {
+        return { n: { H: 0, D: 0, A: 0 }, s: { H: 0, D: 0, A: 0 } }; });
       const runOne = (G, sign) => {
         const r = {};
         TEAMS.forEach(t => {
@@ -4578,17 +4587,30 @@ function _mcWorkerSource() {
           };
         });
         const sim = played.slice();
+        const outs = new Array(unplayed.length);
         for (let i = 0; i < unplayed.length; i++) {
           const f = unplayed[i], h = r[f.homeId], a = r[f.awayId];
-          sim.push({ homeId: f.homeId, awayId: f.awayId,
-            homeGoals: poisson(Math.max(0.05, (h.atk / LEAGUE_AVG) * a.def * HOME_ATK)),
-            awayGoals: poisson(Math.max(0.05, (a.atk / LEAGUE_AVG) * h.def * AWAY_ATK)) });
+          const hg = poisson(Math.max(0.05, (h.atk / LEAGUE_AVG) * a.def * HOME_ATK));
+          const ag = poisson(Math.max(0.05, (a.atk / LEAGUE_AVG) * h.def * AWAY_ATK));
+          sim.push({ homeId: f.homeId, awayId: f.awayId, homeGoals: hg, awayGoals: ag });
+          outs[i] = hg > ag ? 'H' : (ag > hg ? 'A' : 'D');
         }
         const tbl = buildTable(sim, true);
+        let hullPos = 20;
         for (let i = 0; i < tbl.length; i++) {
           posCount[tbl[i].id][i + 1]++;
           ptsSum[tbl[i].id] += tbl[i].pts;
           ptsSqSum[tbl[i].id] += tbl[i].pts * tbl[i].pts;
+          if (tbl[i].id === 'hull') hullPos = i + 1;
+        }
+        const surv = hullPos <= 17 ? 1 : 0;
+        survBase += surv;
+        const sp = tbl[16].pts;
+        safetySum += sp;
+        safetyHist[Math.min(119, Math.max(0, sp))]++;
+        for (let i = 0; i < unplayed.length; i++) {
+          const a = acc[i], o = outs[i];
+          a.n[o]++; a.s[o] += surv;
         }
         const sc = _chaosScore(tbl, expIdx);
         if (!chaos || sc.score > chaos.score) {
@@ -4605,7 +4627,7 @@ function _mcWorkerSource() {
         runOne(G, 1); runOne(G, -1); done += 2;
         if (done % 2000 === 0) postMessage({ progress: done });
       }
-      postMessage({ done, posCount, ptsSum, ptsSqSum, chaos });
+      postMessage({ done, posCount, ptsSum, ptsSqSum, chaos, survBase, safetySum, safetyHist, acc });
     };`;
 }
 
@@ -4623,7 +4645,10 @@ function _mcParallel(total, base, played, unplayed, sigScale, expIdx, onProgress
       const shares = [];
       for (let left = total; left > 0; left -= per) shares.push(Math.min(per, left));
 
-      const acc = { posCount: {}, ptsSum: {}, ptsSqSum: {}, N: 0, chaos: null };
+      const acc = { posCount: {}, ptsSum: {}, ptsSqSum: {}, N: 0, chaos: null,
+                    survBase: 0, safetySum: 0,
+                    safetyHist: new Array(120).fill(0),
+                    acc: unplayed.map(() => ({ n: { H: 0, D: 0, A: 0 }, s: { H: 0, D: 0, A: 0 } })) };
       TEAMS.forEach(t => { acc.posCount[t.id] = new Array(21).fill(0);
                            acc.ptsSum[t.id] = 0; acc.ptsSqSum[t.id] = 0; });
       const seen = new Array(shares.length).fill(0);
@@ -4643,6 +4668,15 @@ function _mcParallel(total, base, played, unplayed, sigScale, expIdx, onProgress
             acc.ptsSqSum[t.id] += d.ptsSqSum[t.id];
           });
           acc.N += d.done;
+          acc.survBase += d.survBase;
+          acc.safetySum += d.safetySum;
+          for (let p = 0; p < acc.safetyHist.length; p++) acc.safetyHist[p] += d.safetyHist[p];
+          for (let i = 0; i < acc.acc.length; i++) {
+            ['H', 'D', 'A'].forEach(o => {
+              acc.acc[i].n[o] += d.acc[i].n[o];
+              acc.acc[i].s[o] += d.acc[i].s[o];
+            });
+          }
           if (d.chaos && (!acc.chaos || d.chaos.score > acc.chaos.score)) acc.chaos = d.chaos;
           w.terminate();
           if (++finished === shares.length) { URL.revokeObjectURL(url); resolve(acc); }
@@ -4676,7 +4710,7 @@ async function runMC() {
   // too long to block on: the old version ran synchronously and would simply
   // freeze the tab. It is therefore batched with a yield between chunks so the
   // progress bar paints and the page stays alive.
-  const TOTAL = 100000, CHUNK = 5000;
+  const TOTAL = 200000, CHUNK = 5000;
   const posCount = {}, ptsSum = {}, ptsSqSum = {};
   TEAMS.forEach(t => {
     posCount[t.id] = new Array(21).fill(0);   // index 1..20
@@ -4736,7 +4770,7 @@ async function runMC() {
   const note = document.getElementById('rel-note');
   const bar = () => document.getElementById('mc-prog');
   if (note) note.innerHTML =
-    `Running <strong style="color:#F5A12D">${TOTAL.toLocaleString()}</strong> simulations…
+    `Running <strong style="color:#F5A12D">${TOTAL.toLocaleString()}</strong> simulations (shared with Survival)…
      <div style="margin:10px 0 0;max-width:340px;height:8px;background:rgba(255,255,255,0.08);
                  border-radius:4px;overflow:hidden">
        <div id="mc-prog" style="height:100%;width:0%;background:linear-gradient(90deg,#F5A12D,#00ff85);transition:width .15s"></div>
@@ -4771,6 +4805,7 @@ async function runMC() {
   }
   _mcParallelUsed = !!par;
   _mcChaos = par ? par.chaos : _fallbackChaos;
+
   // Derive per-team summaries from the full position distribution.
   const sumRange = (id, lo, hi) => {
     let s = 0; for (let p = lo; p <= hi; p++) s += posCount[id][p]; return s;
@@ -4811,6 +4846,30 @@ async function runMC() {
   });
   STATE.mcHistory.sort((a, b) => a.gp - b.gp);
   saveState();
+
+  if (par && par.acc) {
+    // Wrapped: the survival view is a by-product, so a fault building it must
+    // not cost us the league table this run just spent 13 seconds computing.
+    try {
+      const teamRel = {}, teamPts = {}, curPts = {};
+      buildTable(STATE.results).forEach(r => { curPts[r.id] = r.pts; });
+      TEAMS.forEach(t => {
+        let r = 0;
+        for (let p = 18; p <= 20; p++) r += par.posCount[t.id][p];
+        teamRel[t.id] = r;               // counts; _survFinalize divides by N
+        teamPts[t.id] = par.ptsSum[t.id];
+      });
+      _survData = _survFinalize({
+        done: N, unplayed, acc: par.acc, curPts,
+        survBase: par.survBase, safetySum: par.safetySum, safetyHist: par.safetyHist,
+        teamRel, teamPts, firstMW: getCurrentMatchweek(),
+      });
+      _survMW = _survData.firstMW;
+    } catch (e) {
+      console.error('survival derivation failed', e);
+      _survData = null;
+    }
+  }
 
   const relData = TEAMS.map(t => ({ team: t, pct: stat[t.id].rel }))
     .sort((a, b) => b.pct - a.pct);
@@ -6367,7 +6426,19 @@ function _whatIfSurvival(extra) {
 }
 
 async function runSurvival() {
-  if (_survBusy) return;
+  if (_survBusy || _mcBusy) return;
+  // Survival now shares the main simulation. Running it here just triggers
+  // that one pass, which populates _survData as a by-product.
+  if (_survSetup()) {
+    _survBusy = true;
+    const body = document.getElementById('surv-body');
+    if (body) body.innerHTML = `<div style="padding:26px;text-align:center;color:var(--text-secondary)">
+      Running the shared season simulation…</div>`;
+    await runMC();
+    _survBusy = false;
+    renderSurvival();
+    return;
+  }
   _survBusy = true;
   const N = SURV_N, CHUNK = 2500;
   const head = document.getElementById('surv-head');
