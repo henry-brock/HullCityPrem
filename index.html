@@ -4350,6 +4350,125 @@ function teamSigma(id) {
 let _mcResult = null;   // full sim output, reused by run-in / scenarios
 
 let _mcBusy = false;
+let _mcParallelUsed = false;
+
+// ── Worker pool ───────────────────────────────────────────────────────────
+// The simulation is embarrassingly parallel — every season is independent —
+// so it runs on Web Workers across cores rather than tying up the main thread.
+//
+// The worker's code is BUILT FROM THE LIVE FUNCTIONS via toString(), not
+// rewritten. That matters: an earlier attempt to speed this up by hand-coding
+// a faster table build was reverted because it duplicated buildTable's
+// tie-break rules and could drift from them. Here there is still exactly one
+// definition of buildTable, poisson, gaussRand and teamSigma — the workers
+// execute the same source the page does.
+//
+// Tunable constants are baked in at spawn time, so Settings changes are
+// picked up on the next run.
+function _mcWorkerSource() {
+  return `
+    const TEAMS = ${JSON.stringify(TEAMS)};
+    const teamMap = Object.fromEntries(TEAMS.map(t => [t.id, t]));
+    const LEAGUE_AVG = ${LEAGUE_AVG}, HOME_ATK = ${HOME_ATK}, AWAY_ATK = ${AWAY_ATK};
+    const SIGMA_FORM = ${SIGMA_FORM}, SIGMA_IND = ${SIGMA_IND};
+    const PROMOTED_SIGMA = ${JSON.stringify(PROMOTED_SIGMA)};
+    const THIN_PRIOR_SIGMA = ${JSON.stringify(THIN_PRIOR_SIGMA)};
+    ${poisson.toString()}
+    ${gaussRand.toString()}
+    ${teamSigma.toString()}
+    ${buildTable.toString()}
+    onmessage = function (e) {
+      const { n, base, played, unplayed, sigScale } = e.data;
+      const posCount = {}, ptsSum = {}, ptsSqSum = {};
+      TEAMS.forEach(t => { posCount[t.id] = new Array(21).fill(0);
+                           ptsSum[t.id] = 0; ptsSqSum[t.id] = 0; });
+      const runOne = (G, sign) => {
+        const r = {};
+        TEAMS.forEach(t => {
+          const sig = teamSigma(t.id), g = G[t.id];
+          const form = Math.exp(sign * g[0] * sig.form * sigScale);
+          r[t.id] = {
+            atk: base[t.id].atk * form * Math.exp(sign * g[1] * sig.ind * sigScale),
+            def: base[t.id].def / form * Math.exp(sign * g[2] * sig.ind * sigScale),
+          };
+        });
+        const sim = played.slice();
+        for (let i = 0; i < unplayed.length; i++) {
+          const f = unplayed[i], h = r[f.homeId], a = r[f.awayId];
+          sim.push({ homeId: f.homeId, awayId: f.awayId,
+            homeGoals: poisson(Math.max(0.05, (h.atk / LEAGUE_AVG) * a.def * HOME_ATK)),
+            awayGoals: poisson(Math.max(0.05, (a.atk / LEAGUE_AVG) * h.def * AWAY_ATK)) });
+        }
+        buildTable(sim, true).forEach((row, i) => {
+          posCount[row.id][i + 1]++;
+          ptsSum[row.id] += row.pts;
+          ptsSqSum[row.id] += row.pts * row.pts;
+        });
+      };
+      let done = 0;
+      while (done < n) {
+        const G = {};
+        TEAMS.forEach(t => { G[t.id] = [gaussRand(), gaussRand(), gaussRand()]; });
+        runOne(G, 1); runOne(G, -1); done += 2;
+        if (done % 2000 === 0) postMessage({ progress: done });
+      }
+      postMessage({ done, posCount, ptsSum, ptsSqSum });
+    };`;
+}
+
+// Split the work across cores, leaving one free so the page stays smooth.
+// Resolves null if Workers are unavailable or fail, so the caller can fall
+// back to running in-page.
+function _mcParallel(total, base, played, unplayed, sigScale, onProgress) {
+  return new Promise(resolve => {
+    let url;
+    try {
+      const cores = Math.max(1, Math.min(8, (navigator.hardwareConcurrency || 4) - 1));
+      url = URL.createObjectURL(new Blob([_mcWorkerSource()], { type: 'text/javascript' }));
+      // Antithetic variates come in pairs, so every worker's share must be even.
+      const per = Math.max(2, Math.ceil(total / cores / 2) * 2);
+      const shares = [];
+      for (let left = total; left > 0; left -= per) shares.push(Math.min(per, left));
+
+      const acc = { posCount: {}, ptsSum: {}, ptsSqSum: {}, N: 0 };
+      TEAMS.forEach(t => { acc.posCount[t.id] = new Array(21).fill(0);
+                           acc.ptsSum[t.id] = 0; acc.ptsSqSum[t.id] = 0; });
+      const seen = new Array(shares.length).fill(0);
+      let finished = 0, failed = false;
+      const workers = shares.map((n, i) => {
+        const w = new Worker(url);
+        w.onmessage = ev => {
+          const d = ev.data;
+          if (d.progress !== undefined) {
+            seen[i] = d.progress;
+            onProgress(seen.reduce((a, b) => a + b, 0));
+            return;
+          }
+          TEAMS.forEach(t => {
+            for (let p = 1; p <= 20; p++) acc.posCount[t.id][p] += d.posCount[t.id][p];
+            acc.ptsSum[t.id] += d.ptsSum[t.id];
+            acc.ptsSqSum[t.id] += d.ptsSqSum[t.id];
+          });
+          acc.N += d.done;
+          w.terminate();
+          if (++finished === shares.length) { URL.revokeObjectURL(url); resolve(acc); }
+        };
+        w.onerror = () => {
+          if (failed) return;
+          failed = true;
+          workers.forEach(x => { try { x.terminate(); } catch (e) {} });
+          URL.revokeObjectURL(url);
+          resolve(null);            // caller falls back to the in-page loop
+        };
+        return w;
+      });
+      workers.forEach((w, i) => w.postMessage({ n: shares[i], base, played, unplayed, sigScale }));
+    } catch (e) {
+      if (url) URL.revokeObjectURL(url);
+      resolve(null);
+    }
+  });
+}
 
 async function runMC() {
   if (_mcBusy) return;
@@ -4424,16 +4543,31 @@ async function runMC() {
      </div>`;
 
   let N = 0;
-  while (N < TOTAL) {
-    const stop = Math.min(N + CHUNK, TOTAL);
-    while (N < stop) {
-      const G = {};
-      TEAMS.forEach(t => { G[t.id] = [gaussRand(), gaussRand(), gaussRand()]; });
-      runOne(G, 1); runOne(G, -1); N += 2;
+  const setBar = done => { if (bar()) bar().style.width = (done / TOTAL * 100).toFixed(0) + '%'; };
+
+  // Preferred path: spread the seasons across cores. Falls back to the in-page
+  // chunked loop when Workers are blocked (some CSP setups) or error.
+  const par = await _mcParallel(TOTAL, base, STATE.results, unplayed, sigScale, setBar);
+  if (par) {
+    N = par.N;
+    TEAMS.forEach(t => {
+      for (let p = 1; p <= 20; p++) posCount[t.id][p] = par.posCount[t.id][p];
+      ptsSum[t.id] = par.ptsSum[t.id];
+      ptsSqSum[t.id] = par.ptsSqSum[t.id];
+    });
+  } else {
+    while (N < TOTAL) {
+      const stop = Math.min(N + CHUNK, TOTAL);
+      while (N < stop) {
+        const G = {};
+        TEAMS.forEach(t => { G[t.id] = [gaussRand(), gaussRand(), gaussRand()]; });
+        runOne(G, 1); runOne(G, -1); N += 2;
+      }
+      setBar(N);
+      await new Promise(r => setTimeout(r, 0));   // yield so the bar paints
     }
-    if (bar()) bar().style.width = (N / TOTAL * 100).toFixed(0) + '%';
-    await new Promise(r => setTimeout(r, 0));   // yield so the bar paints
   }
+  _mcParallelUsed = !!par;
   // Derive per-team summaries from the full position distribution.
   const sumRange = (id, lo, hi) => {
     let s = 0; for (let p = lo; p <= hi; p++) s += posCount[id][p]; return s;
@@ -4482,7 +4616,8 @@ async function runMC() {
 
   document.getElementById('rel-note').innerHTML =
     `Results from <strong style="color:#fff">${N.toLocaleString()} simulations</strong> ` +
-    `<span style="color:var(--text-secondary)">(±${mcMargin}pp Monte-Carlo margin, antithetic variates)</span>. ` +
+    `<span style="color:var(--text-secondary)">(±${mcMargin}pp Monte-Carlo margin, antithetic variates` +
+    `${_mcParallelUsed ? ', run in parallel across cores' : ''})</span>. ` +
     `Teams in red have >50% probability of relegation. ` +
     `<em style="color:var(--text-secondary)">Correlated log-normal noise (promoted sides wider) + Dixon-Coles, tuned against 2025/26.</em>`;
 
