@@ -2307,9 +2307,26 @@ const TEAM_ESPN = {
   liverpool:'364', mancity:'382', manutd:'360', newcastle:'361',
   nottmforest:'393', sunderland:'366', tottenham:'367',
 };
+// These three crests are near-monochrome in the same colour as their own badge,
+// so they disappear against it — Tottenham's crest averages rgb(19,34,87)
+// against a #132257 badge, an exact match, with Liverpool and Forest both red
+// on red. They get a light plate with the club colour kept as a ring.
+//
+// Deliberately a fixed list, not a computed contrast rule: average colour is a
+// poor proxy for legibility. Manchester City scores as "low contrast" by that
+// measure yet reads perfectly, because its crest has strong internal contrast
+// (white ring, dark detail) that averaging hides.
+const CREST_NEEDS_PLATE = new Set(['liverpool', 'tottenham', 'nottmforest']);
+
 function _crest(id) {
   const e = TEAM_ESPN[id];
-  return e ? `background-image:url('https://a.espncdn.com/i/teamlogos/soccer/500/${e}.png');background-size:78%;background-position:center;background-repeat:no-repeat` : '';
+  if (!e) return '';
+  const base = `background-image:url('https://a.espncdn.com/i/teamlogos/soccer/500/${e}.png');`
+             + `background-position:center;background-repeat:no-repeat;`;
+  if (!CREST_NEEDS_PLATE.has(id)) return base + 'background-size:78%';
+  const t = (typeof teamMap !== 'undefined' && teamMap[id]) ? teamMap[id] : null;
+  return base + `background-size:70%;background-color:#f4f5f7;`
+              + (t ? `box-shadow:inset 0 0 0 2px ${t.col}` : '');
 }
 
 function poisson(λ) {
