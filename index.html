@@ -2504,7 +2504,7 @@ function getTeamRatings(teamId, results) {
   const games = src.filter(r => r.homeId === teamId || r.awayId === teamId);
   const n     = games.length;
 
-  if (n < 3) return { atk: team.baseAtk, def: team.baseDef };
+  if (!n) return { atk: team.baseAtk, def: team.baseDef };
 
   // Recency-weighted actual rates: oldest game → weight 1, newest → weight 2.
   // When OPP_ADJUST is on, goals are scaled by opponent strength (normalised
@@ -2520,7 +2520,8 @@ function getTeamRatings(teamId, results) {
       scored   *= clamp(MEAN_DEF / opp.baseDef);  // goals vs strong D count more
       conceded *= clamp(MEAN_ATK / opp.baseAtk);  // goals vs strong A excused
     }
-    const w = 1 + (i / (n - 1)) * 1;
+    // Guard n === 1: without it i/(n-1) is 0/0, and the whole rating is NaN.
+    const w = 1 + (n > 1 ? i / (n - 1) : 0);
     atkSum  += scored   * w;
     defSum  += conceded * w;
     wTotal  += w;
@@ -2529,8 +2530,21 @@ function getTeamRatings(teamId, results) {
   const actualDef = defSum / wTotal;
 
   // Promoted sides (low-confidence prior) shed it faster: 80 % cap vs 65 %.
-  const cap   = PROMOTED_SIGMA[teamId] ? 0.80 : 0.65;
-  const blend = Math.min(n / 12, cap);
+  const cap = PROMOTED_SIGMA[teamId] ? 0.80 : 0.65;
+
+  // Smoothstep ramp: the weight given to actual results eases in from game one
+  // and reaches the cap at game 10, then holds.
+  //
+  // This replaces `n < 3 ? prior : min(n/12, cap)`, which had a cliff — a side
+  // was rated on its pure prior for two games and then jumped straight to 25%
+  // actuals on the third. For Hull that single step was worth 0.49 of defence
+  // rating and moved their relegation probability by 28 points, which is a
+  // threshold artefact rather than the model learning something.
+  //
+  // Smoothstep has zero slope at both ends: no jolt from the first result
+  // (2% weight), and no corner where it meets the cap at game 10.
+  const t = Math.min(1, n / 10);
+  const blend = cap * t * t * (3 - 2 * t);
   return {
     atk: team.baseAtk * (1 - blend) + actualAtk * blend,
     def: team.baseDef * (1 - blend) + actualDef * blend,
