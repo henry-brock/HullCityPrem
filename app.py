@@ -266,6 +266,21 @@ def import_results():
 
         _save(current)
 
+        # A new match makes every player total stale. Those caches carry a 6h
+        # TTL, which is fine for idle refreshes but wrong here: a result that
+        # lands mid-window leaves minutes and goals frozen at the previous
+        # match for hours, and the "refetch when appearances changed" logic in
+        # pl_players never gets a chance to run because the file-level TTL
+        # short-circuits it first. Dropping the caches on import ties
+        # invalidation to the event that actually invalidates them.
+        if added:
+            for name in (f"pulse_players_{season}.json", f"pl_players_{season}.json"):
+                stale = CACHE_DIR / name
+                try:
+                    stale.unlink(missing_ok=True)
+                except OSError as exc:
+                    print(f"[import] could not clear {name}: {exc}", file=sys.stderr)
+
         return jsonify({
             "ok":       True,
             "season":   season,
@@ -274,6 +289,7 @@ def import_results():
             "sources":  sources,
             "total":    len(current["results"]),
             "matches":  added,
+            "playerCacheCleared": bool(added),
         })
 
     except SeasonNotAvailable as exc:
