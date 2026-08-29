@@ -3548,7 +3548,7 @@ function renderRivals() {
               <td>${(r.form || []).slice(-5).map(f => `<span class="form-${f}">${f}</span>`).join('') || '—'}</td>
               <td><span style="color:${col};font-weight:700">${d ? d.avg.toFixed(2) : '—'}</span></td>
               <td>${mine}</td>
-              ${rel ? `<td style="font-weight:700;color:${(rel[r.id]?.rel ?? 0) > 40 ? '#ff4d5e' : (rel[r.id]?.rel ?? 0) > 15 ? '#F5A12D' : '#00ff85'}">${rel[r.id] ? rel[r.id].rel.toFixed(0) + '%' : '—'}</td>` : ''}
+              ${rel ? `<td style="font-weight:700;color:${(rel[r.id]?.rel ?? 0) > 40 ? '#ff4d5e' : (rel[r.id]?.rel ?? 0) > 15 ? '#F5A12D' : '#00ff85'}">${rel[r.id] ? rel[r.id].rel.toFixed(1) + '%' : '—'}</td>` : ''}
             </tr>`;
           }).join('')}
         </tbody>
@@ -6178,7 +6178,9 @@ function renderSurvival() {
 
   head.innerHTML = `
     <div style="margin-bottom:14px;font-size:0.95rem">${magic}</div>
-    <div class="surv-stat"><div class="surv-stat-val" style="color:${sc}">${res.baseSurv.toFixed(1)}%<span style="font-size:0.85rem;color:var(--text-secondary);font-weight:600"> ±${res.margin.toFixed(1)}</span></div><div class="surv-stat-lbl">Survival chance (${(res.N/1000)}k sims)</div></div>
+    <div class="surv-stat"><div class="surv-stat-val" style="color:${sc}">${res.baseSurv.toFixed(1)}%<span style="font-size:0.85rem;color:var(--text-secondary);font-weight:600"> ±${res.margin.toFixed(1)}</span></div><div class="surv-stat-lbl">Survival chance
+      <span style="opacity:.75">— i.e. ${(100 - res.baseSurv).toFixed(1)}% relegation, the figure League Odds shows</span>
+      <br>(${(res.N / 1000)}k sims, shared with League Odds)</div></div>
     <div class="surv-stat"><div class="surv-stat-val" style="color:#F5A12D">${res.safetyLine}</div><div class="surv-stat-lbl">Safety line — ${Math.round(res.safetyPct*100)}th pct of 17th (${(res.N/1000)}k sims)</div></div>
     <div class="surv-stat"><div class="surv-stat-val" style="color:#fff">${need}</div><div class="surv-stat-lbl">Pts still needed</div></div>
     <div class="surv-stat"><div class="surv-stat-val" style="color:#fff">${res.hullPts}</div><div class="surv-stat-lbl">Hull pts so far</div></div>
