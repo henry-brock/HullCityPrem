@@ -31,9 +31,15 @@ teams outside the 2026/27 roster (Leicester, Southampton, …). Opponent-
 adjusted ratings need those games to rate the teams that did stay up;
 `homeId`/`awayId` are simply null for a team with no internal id.
 
-Resumable: per-fixture stats are keyed by fixture id and never re-fetched,
-and progress is flushed to disk as it goes, so an interrupted run resumes
-where it stopped.
+Resumable: per-fixture stats are keyed by fixture id, and progress is
+flushed to disk as it goes, so an interrupted run resumes where it stopped.
+
+Settled vs provisional: Opta keeps editing a match for a day or two after
+the whistle — possession is re-derived and late fields like clean_sheet
+arrive after the initial feed. A match archived straight after kickoff is
+therefore frozen with provisional numbers unless it is fetched again, so
+anything played within SETTLE_DAYS is re-fetched on every run. Older
+matches, including whole finished seasons, are never re-fetched.
 """
 
 import argparse
@@ -57,6 +63,7 @@ DEFAULT_SEASONS = ["2324", "2425", "2526", "2627"]
 
 REQUEST_DELAY = 0.15   # be polite — this walks ~380 fixtures per season
 FLUSH_EVERY   = 25     # matches between incremental saves
+SETTLE_DAYS   = 7      # a match younger than this may still be provisional
 
 
 def _season_path(season: str) -> Path:
@@ -135,6 +142,20 @@ def _record(fixture: dict, stats_by_team: dict) -> dict | None:
     }
 
 
+def _settled(record: dict) -> bool:
+    """
+    True once a match is old enough that Opta has stopped revising it. A
+    record with no kickoff time is treated as settled: those come from the
+    finished archive seasons, which are long past.
+    """
+    millis = record.get("ms") or 0
+    if not millis:
+        return True
+    age = datetime.now(tz=timezone.utc) - datetime.fromtimestamp(millis / 1000,
+                                                                 tz=timezone.utc)
+    return age > timedelta(days=SETTLE_DAYS)
+
+
 def build_season(season: str, force: bool = False) -> dict:
     """Fetch/refresh one season into Newcache. Returns a summary dict."""
     NEWCACHE.mkdir(exist_ok=True)
@@ -149,7 +170,8 @@ def build_season(season: str, force: bool = False) -> dict:
     fetched = 0
     for i, fixture in enumerate(fixtures, 1):
         key = str(int(fixture["id"]))
-        if key in cached and cached[key].get("stats", {}).get("home"):
+        if key in cached and cached[key].get("stats", {}).get("home") \
+                and _settled(cached[key]):
             continue
 
         record = _record(fixture, _fetch_match_stats(int(fixture["id"])))

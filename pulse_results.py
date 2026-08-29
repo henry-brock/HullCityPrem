@@ -51,6 +51,7 @@ ROOT        = Path(__file__).parent
 CACHE_DIR   = ROOT / "cache"
 
 CACHE_TTL   = timedelta(minutes=15)   # live source — refresh often
+SETTLE_DAYS = 7                       # a younger match may still be provisional
 PL_COMP_ID  = 1
 
 # Pulse fixture status codes. Only "C" (completed) may be imported —
@@ -152,6 +153,20 @@ def _side_stats(stats: dict | None) -> dict:
 
 
 # ── Core ────────────────────────────────────────────────────────────────
+
+def _settled(fixture: dict) -> bool:
+    """
+    True once Opta has stopped revising a match. Without this the first
+    (provisional) stat block fetched after the whistle would be cached
+    permanently, freezing possession and dropping late-arriving fields.
+    """
+    millis = (fixture.get("kickoff") or {}).get("millis") or 0
+    if not millis:
+        return True
+    age = datetime.now(tz=timezone.utc) - datetime.fromtimestamp(millis / 1000,
+                                                                 tz=timezone.utc)
+    return age > timedelta(days=SETTLE_DAYS)
+
 
 def _completed(raw: list[dict]) -> list[dict]:
     return [f for f in raw if f.get("status") == STATUS_COMPLETED]
@@ -257,8 +272,10 @@ def fetch(season: str = "2627", force: bool = False) -> list[dict]:
 
     played = _completed(_fetch_all(season_id))
 
-    # Per-fixture stats cache — completed matches are immutable, so only
-    # fetch blocks we have never seen before.
+    # Per-fixture stats cache. A finished match is NOT immutable: Opta keeps
+    # revising it for a day or two, re-deriving possession and adding late
+    # fields such as clean_sheet. So blocks are re-fetched until the match is
+    # SETTLE_DAYS old, and only then treated as final.
     try:
         stats_cache = json.loads(stats_path.read_text()) if stats_path.exists() else {}
     except json.JSONDecodeError:
@@ -267,7 +284,7 @@ def fetch(season: str = "2627", force: bool = False) -> list[dict]:
     fetched = 0
     for fixture in played:
         key = str(int(fixture["id"]))
-        if key not in stats_cache:
+        if force or key not in stats_cache or not _settled(fixture):
             stats_cache[key] = _fetch_match_stats(int(fixture["id"]))
             fetched += 1
 
