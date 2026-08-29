@@ -4777,7 +4777,18 @@ async function runMC() {
      </div>`;
 
   let N = 0;
-  const setBar = done => { if (bar()) bar().style.width = (done / TOTAL * 100).toFixed(0) + '%'; };
+  // Drive every progress bar that happens to be on screen. The run can be
+  // kicked off from either tab, so both are updated rather than assuming the
+  // caller's one is the visible one.
+  const setBar = done => {
+    const pct = (done / TOTAL * 100).toFixed(0);
+    ['mc-prog', 'surv-prog'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.width = pct + '%';
+    });
+    const txt = document.getElementById('surv-prog-pct');
+    if (txt) txt.textContent = pct + '%';
+  };
 
   // Preferred path: spread the seasons across cores. Falls back to the in-page
   // chunked loop when Workers are blocked (some CSP setups) or error.
@@ -6431,9 +6442,20 @@ async function runSurvival() {
   // that one pass, which populates _survData as a by-product.
   if (_survSetup()) {
     _survBusy = true;
+    const head = document.getElementById('surv-head');
     const body = document.getElementById('surv-body');
+    if (head) head.innerHTML = '';
+    // The shared run paints into whichever progress bar is on screen, so the
+    // Survival tab needs its own — otherwise the only bar lives on League
+    // Odds and this tab just sits on a static message for 12 seconds.
     if (body) body.innerHTML = `<div style="padding:26px;text-align:center;color:var(--text-secondary)">
-      Running the shared season simulation…</div>`;
+      Running <strong style="color:#F5A12D">200,000</strong> simulations
+      <span style="opacity:.7">— shared with League Odds</span>
+      <div style="margin:12px auto 0;max-width:340px;height:8px;background:rgba(255,255,255,0.08);border-radius:4px;overflow:hidden">
+        <div id="surv-prog" style="height:100%;width:0%;background:linear-gradient(90deg,#F5A12D,#00ff85);transition:width .15s"></div>
+      </div>
+      <div id="surv-prog-pct" style="margin-top:7px;font-size:0.75rem;color:var(--text-secondary)">0%</div>
+    </div>`;
     await runMC();
     _survBusy = false;
     renderSurvival();
