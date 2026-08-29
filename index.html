@@ -2233,6 +2233,22 @@ let FIXTURES_SOURCE = 'random'; // 'random' | 'official'
 
 // Squad lives in the server cache (not in STATE); loaded separately
 
+// Analytics responses are fetched once and reused, which is right for tab
+// switching and wrong when a match is played: Team Stats, Derived Stats,
+// Styles and the Player Rater would keep serving their first response until a
+// full page reload.
+//
+// Deliberately NOT called from saveState(). That fires on every simulation
+// run too (it stores the mcHistory snapshot), and none of these depend on
+// simulation output — invalidating there would refetch several megabytes each
+// time you pressed Run. Results changing is the only thing that stales them.
+function _invalidateAnalytics() {
+  _tsData = null;      // Team Stats
+  _dvData = null;      // Derived Stats
+  _stylesData = null;  // Style fingerprints
+  _prData = null;      // Player Rater + per-opportunity table
+}
+
 function saveState() {
   _survData = null;   // state changed → survival cache is stale, recompute on next open
   const payload = { ...STATE, fixtures: ALL_FIXTURES, fixturesSource: FIXTURES_SOURCE };
@@ -4199,6 +4215,7 @@ function submitResult() {
   }
 
   STATE.results.push({ homeId, awayId, homeGoals, awayGoals });
+  _invalidateAnalytics();
   saveState(); renderTable(); renderResList();
   document.getElementById('in-home').value = 0;
   document.getElementById('in-away').value = 0;
@@ -4207,6 +4224,7 @@ function submitResult() {
 
 function delResult(idx) {
   STATE.results.splice(idx, 1);
+  _invalidateAnalytics();
   saveState(); renderTable(); renderResList();
   toast('Result removed');
 }
@@ -5231,6 +5249,7 @@ async function syncResults(silent) {
     if (data.not_available) { if (st) st.textContent = '2026/27 not started yet'; return; }
     if (!res.ok || data.error) { if (st && !silent) st.textContent = 'Sync failed'; return; }
     await loadState();
+    if (data.added) _invalidateAnalytics();   // new match → every analytics view is stale
     populateSelects(); renderTable(); renderResList(); renderStrTable(); updateFixtureBanner();
     if (st) {
       const live = (data.sources || []).includes('pulse') ? ' · live' : '';
