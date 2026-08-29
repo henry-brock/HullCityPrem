@@ -2783,8 +2783,10 @@ const TAB_GROUPS = {
               ['rivals',        'Rival Tracker']],
   scout:     [['scout',         "Hull's Next Opponent"],
               ['scoutpick',     'Scout Any Team']],
-  simulate:  [['simulate',      'Run & Projection'],
-              ['relegation',    'League Odds'],
+  // League Odds first: it holds the Run Simulation button and the headline
+  // output, so it is what the tab is actually for.
+  simulate:  [['relegation',    'League Odds'],
+              ['simulate',      'Run & Projection'],
               ['accuracy',      'Model Accuracy']],
   squad:     [['planalysis',    'Premier League 26/27'],
               ['champanalysis', 'Championship 25/26']],
