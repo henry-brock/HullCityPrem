@@ -142,7 +142,8 @@ def rate_players():
     try:
         from pl_players import fetch as fetch_pool
         from player_rater import (CONCEPTS_GK, CONCEPTS_OUT, MIN_MINUTES_SHARE,
-                                  WEIGHTS, leaderboard, rate, player_derived)
+                                  ROLES, WEIGHTS, leaderboard, rate,
+                                  player_derived)
 
         pool = fetch_pool(season=season, force=force)["players"]
         rows = rate(pool, target_team=team, season=season)
@@ -155,12 +156,9 @@ def rate_players():
             "leaders": leaderboard(pool, season=season, top=10),
             "minShare": MIN_MINUTES_SHARE,
             "pool":    sum(1 for p in pool if (p.get("stats") or {}).get("minutes", 0) > 0),
-            "concepts": {
-                "G": list(CONCEPTS_GK),
-                "D": [c for c in CONCEPTS_OUT if WEIGHTS["D"].get(c)],
-                "M": [c for c in CONCEPTS_OUT if WEIGHTS["M"].get(c)],
-                "F": [c for c in CONCEPTS_OUT if WEIGHTS["F"].get(c)],
-            },
+            "concepts": {r: (list(CONCEPTS_GK) if r == "G"
+                             else [c for c in CONCEPTS_OUT if WEIGHTS[r].get(c)])
+                         for r in ROLES},
             "negative": [c for c, d in {**CONCEPTS_OUT, **CONCEPTS_GK}.items() if d.get("neg")],
         })
     except Exception as exc:

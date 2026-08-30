@@ -86,20 +86,39 @@ CONCEPTS_GK = {
 BASE_WEIGHTS = {
     "G": {"Shot-stopping": 5, "Claiming": 2, "Sweeping": 1, "Distribution": 2,
           "Conceding": 3},
-    # A defender is rated on DEFENDING: stopping the ball (clearances, blocks),
-    # winning it back, and winning his duels. Security stays, small, because
-    # an error leading to a shot and a needless foul are defensive failures,
-    # not on-ball ones. Passing, progression, creation and shooting are gone:
-    # they are real skills, but they belong to the midfield job, and including
-    # them meant a centre-back at a 60%-possession side out-rated one at a
-    # 30%-possession side on the strength of touches he was simply given.
-    "D": {"Defending": 5, "Duels": 4, "Ball-winning": 3, "Security": 1},
+    # Centre-backs and full-backs are rated apart, because they are different
+    # jobs: the league's full-backs cross 2.5 times a game at the median and
+    # its centre-backs cross zero. Judging them together scored a full-back on
+    # heading and a centre-back on crossing, and neither is the work.
+    #
+    # A centre-back is rated on stopping the ball — clearances, blocks, duels,
+    # winning it back. Security is small but present: an error leading to a
+    # shot and a needless foul are defensive failures, not on-ball ones.
+    # Passing is kept deliberately light. A centre-back who can play does have
+    # value, but weighting it heavily meant one at a 60%-possession side
+    # out-rated one at a 30%-possession side on the strength of touches he was
+    # simply given rather than anything he did defending.
+    "CB": {"Defending": 5, "Duels": 4, "Ball-winning": 3, "Security": 1,
+           "Passing": 1},
+    # A full-back defends and attacks, so the weight is split. Creation covers
+    # the crossing and overlapping that is genuinely part of the job.
+    "FB": {"Defending": 3, "Duels": 3, "Ball-winning": 3, "Creation": 3,
+           "Progression": 2, "Security": 1, "Passing": 1},
     # A midfielder's job is control and creation: keep it, move it forward,
     # make chances, win it back.
-    "M": {"Passing": 4, "Creation": 4, "Progression": 3, "Ball-winning": 3,
-          "Duels": 2, "Security": 2},
-    # A forward's job is to score, and to create for the players around him.
-    "F": {"Shooting": 5, "Creation": 3, "Progression": 1, "Security": 0.5},
+    # Central midfield — the job is control: keep it, move it forward, make
+    # chances, win it back. Defensive, central and attacking central mids are
+    # one group for now: only 8 defensive midfielders clear the minutes bar,
+    # and a peer group that small gives percentiles in 12-point steps.
+    "CM": {"Passing": 4, "Creation": 4, "Progression": 3, "Ball-winning": 3,
+           "Duels": 2, "Security": 2},
+    # A winger creates and scores, and is judged much less on winning the ball
+    # back than a central midfielder is.
+    "W":  {"Creation": 4, "Shooting": 3, "Progression": 3, "Passing": 1,
+           "Duels": 1, "Security": 1, "Ball-winning": 0.5},
+    # A centre-forward is judged on goals, and on the chances he makes for
+    # others. Almost nothing else is the job.
+    "ST": {"Shooting": 5, "Creation": 2, "Progression": 1, "Security": 0.5},
 }
 
 # How much of a concept carries from one season to the next, measured on 167
@@ -133,7 +152,57 @@ WEIGHTS = {
     for pos, base in BASE_WEIGHTS.items()
 }
 
-RATING_LABEL = {"G": "Goalkeeping", "D": "Defending", "M": "Influence", "F": "Goal threat"}
+RATING_LABEL = {"G": "Goalkeeping", "CB": "Defending", "FB": "Full-back play",
+                "CM": "Control", "W": "Wing play", "ST": "Goal threat"}
+
+# The rating groups. Pulse reports a coarse position (G/D/M/F) and a detailed
+# role ("Left Full Back", "Centre Central Defender"); the detailed one is what
+# separates the two defensive jobs.
+ROLES = ("G", "CB", "FB", "CM", "W", "ST")
+
+# Full-backs cross; centre-backs do not. Used only for the handful of players
+# Pulse files as a bare "Defender" — the league medians are 2.5 crosses per 90
+# for a full-back and 0.0 for a centre-back, so this is a wide gap to fall in.
+FB_CROSS_PER90 = 1.5
+
+
+def _role(player: dict) -> str:
+    """
+    Which peer group a player is rated against.
+
+    Driven by Pulse's detailed role, because the coarse position is not
+    reliable for this: of the league's wingers, 17 are filed under midfield
+    and 67 under forward. Grouping on the coarse field would rate a winger
+    against Haaland or against a holding midfielder depending on which way
+    the feed happened to file him.
+    """
+    pos  = player.get("pos") or ""
+    if pos == "G":
+        return "G"
+    info = player.get("posInfo") or ""
+    # Order matters: "Left/Centre/Right Attacking Midfielder" must land in
+    # midfield, and "Second Striker" up front.
+    if "Full Back" in info or "Wing Back" in info:
+        return "FB"
+    if "Central Defender" in info or "Centre Back" in info:
+        return "CB"
+    if "Winger" in info:
+        return "W"
+    if "Striker" in info or "Forward" in info:
+        return "ST"
+    if "Midfielder" in info:
+        return "CM"
+
+    # Bare "Defender"/"Midfielder"/"Forward" with no detail — fall back to the
+    # coarse position, splitting defenders on crossing volume.
+    if pos == "D":
+        stats = player.get("stats") or {}
+        mins  = stats.get("minutes") or 0
+        if mins:
+            per90 = (stats.get("totalCrosses") or 0) / mins * 90
+            return "FB" if per90 >= FB_CROSS_PER90 else "CB"
+        return "CB"
+    return "ST" if pos == "F" else "CM"
 
 # Stats already expressed as a rate — must not be divided by minutes again.
 RATE_STATS = {"passPct", "savePct", "tacklePct", "shotPct", "goalConversion",
@@ -283,12 +352,12 @@ def _rate_pool(players: list[dict], season: str = "2627",
     floor    = max(all_mins or [0]) * MIN_MINUTES_SHARE
 
     by_pos = {}
-    for pos in ("G", "D", "M", "F"):
+    for pos in ROLES:
         concepts = CONCEPTS_GK if pos == "G" else CONCEPTS_OUT
         weights  = WEIGHTS[pos]
 
         peers = [p for p in players
-                 if p.get("pos") == pos and (p.get("stats", {}).get("minutes") or 0) > 0]
+                 if _role(p) == pos and (p.get("stats", {}).get("minutes") or 0) > 0]
         if not peers:
             continue
 
@@ -336,6 +405,7 @@ def _rate_pool(players: list[dict], season: str = "2627",
                 "name":      p.get("name"),
                 "team":      p.get("team"),
                 "pos":       pos,
+                "posInfo":   p.get("posInfo") or "",
                 "shirt":     p.get("shirt"),
                 "minutes":   mins,
                 # Headline: pulled toward average by how little we have seen.
@@ -446,18 +516,19 @@ def _ratio(num, den, scale):
 def player_derived(players: list[dict], target_team: str = "hull") -> dict:
     """
     Per-opportunity ratios for a team's players, with each value's percentile
-    against league peers IN THE SAME POSITION so the numbers are comparable.
+    against league peers IN THE SAME ROLE so the numbers are comparable — a
+    winger's crossing judged against wingers, not against centre-backs.
     """
     by_pos = {}
     for p in players:
         if (p.get("stats", {}).get("minutes") or 0) > 0:
-            by_pos.setdefault(p.get("pos"), []).append(p)
+            by_pos.setdefault(_role(p), []).append(p)
 
     rows = []
     for p in players:
         if p.get("team") != target_team or (p.get("stats", {}).get("minutes") or 0) <= 0:
             continue
-        peers = by_pos.get(p.get("pos"), [])
+        peers = by_pos.get(_role(p), [])
         vals, pcts = {}, {}
         for name, fn, opts in PLAYER_DERIVED:
             v = fn(p["stats"])
@@ -468,7 +539,7 @@ def player_derived(players: list[dict], target_team: str = "hull") -> dict:
                 pct = 100 - pct
             pcts[name] = round(pct) if v is not None else None
         rows.append({
-            "id": p.get("id"), "name": p.get("name"), "pos": p.get("pos"),
+            "id": p.get("id"), "name": p.get("name"), "pos": _role(p),
             "shirt": p.get("shirt"), "minutes": p["stats"].get("minutes"),
             "values": vals, "pcts": pcts, "peers": len(peers),
         })

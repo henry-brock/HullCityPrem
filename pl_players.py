@@ -97,6 +97,10 @@ def fetch(season: str = "2627", force: bool = False) -> dict:
                 "name":  (p.get("name") or {}).get("display") or "",
                 "team":  internal,
                 "pos":   info.get("position") or "",
+                # Pulse's detailed role ("Left Full Back", "Centre Central
+                # Defender"). A full-back and a centre-back do different jobs
+                # and cannot fairly be rated against each other.
+                "posInfo": info.get("positionInfo") or "",
                 "shirt": info.get("shirtNum"),
             }
             if apps == 0:
