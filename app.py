@@ -368,6 +368,44 @@ def hull_analysis(league):
         return jsonify({"players": [], "error": str(exc)}), 500
 
 
+@app.route("/api/live")
+def live_matches():
+    """
+    Matches in progress right now, with the score as it stands.
+
+    Read-only and deliberately so. Nothing here is written to data.json or to
+    any cache: an unfinished match has provisional stats, and the whole point
+    of the settle window elsewhere is that provisional data must never be
+    stored as if it were final. This exists to be shown, then thrown away.
+    """
+    try:
+        from fixture_scraper import _fetch_all, _name_to_id, _team_name
+        from pulse_results import _find_season_id, _season_year
+
+        season = request.args.get("season", "2627")
+        out = []
+        for f in _fetch_all(_find_season_id(_season_year(season))):
+            if f.get("status") != "L":
+                continue
+            sides = f.get("teams") or []
+            if len(sides) != 2:
+                continue
+            ids = [_name_to_id(_team_name(s.get("team", {}))) for s in sides]
+            if not all(ids):
+                continue
+            out.append({
+                "homeId":    ids[0],
+                "awayId":    ids[1],
+                "homeGoals": int(sides[0].get("score") or 0),
+                "awayGoals": int(sides[1].get("score") or 0),
+                "clock":     (f.get("clock") or {}).get("label", ""),
+                "phase":     f.get("phase"),
+            })
+        return jsonify({"live": out})
+    except Exception as exc:
+        return jsonify({"live": [], "error": str(exc)}), 500
+
+
 @app.route("/api/formations")
 def formations():
     """Starting shapes each team has used, and what they have faced."""

@@ -1261,6 +1261,29 @@
       background: rgba(245,161,45,0.16); color: #F5A12D; vertical-align: 1px;
     }
     .pr-alias { background: rgba(255,255,255,0.07); color: var(--text-secondary); }
+    .lv-toggle {
+      display: inline-flex; align-items: center; gap: 5px; margin-left: 10px;
+      font-size: 0.72rem; color: var(--text-secondary); cursor: pointer; user-select: none;
+    }
+    .lv-strip {
+      display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 16px 2px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .lv-match {
+      display: flex; align-items: center; gap: 7px; padding: 4px 9px; border-radius: 5px;
+      background: rgba(220,20,60,0.10); border: 1px solid rgba(220,20,60,0.30);
+      font-size: 0.74rem; font-variant-numeric: tabular-nums;
+    }
+    .lv-dot {
+      width: 6px; height: 6px; border-radius: 50%; background: #dc143c;
+      animation: lvpulse 1.6s ease-in-out infinite;
+    }
+    @keyframes lvpulse { 0%,100% { opacity: 1 } 50% { opacity: 0.25 } }
+    .lv-clock { color: #dc143c; font-weight: 700; font-size: 0.68rem; }
+    .lv-crest { width: 15px; height: 15px; display: inline-block; vertical-align: -3px; }
+    tr.lv-row td { box-shadow: inset 3px 0 0 #dc143c; }
+    .lv-delta { font-size: 0.62rem; margin-left: 5px; font-weight: 700; }
+    .lv-up { color: #22c55e; } .lv-down { color: #dc143c; }
     .pr-rank small { color: var(--text-secondary); font-size: 0.85em; }
     .pr-conf { font-size: 0.6rem; color: var(--text-secondary); margin-left: 3px; }
     .pr-score {
@@ -1557,7 +1580,11 @@
       <div id="table-mode-toggle" class="sa-filters" style="border-bottom:none;padding-bottom:0">
         <button class="sa-btn active" data-mode="full" onclick="setTableMode('full')">Full table</button>
         <button class="sa-btn" data-mode="form" onclick="setTableMode('form')">Form (last 6)</button>
+        <label class="lv-toggle" title="Fold in-progress scores into the standings. Provisional — nothing is saved.">
+          <input type="checkbox" id="lv-include" onchange="setLiveInclude(this.checked)"> Include live
+        </label>
       </div>
+      <div id="lv-strip"></div>
       <div class="zone-legend">
         <div class="zone-item"><div class="zone-pip" style="background:#1e90ff"></div>Champions League (Top 5)</div>
         <div class="zone-item"><div class="zone-pip" style="background:#ff8c00"></div>Europa League (6–7)</div>
@@ -2687,9 +2714,76 @@ function _formResults(n) {
   return STATE.results.filter(r => (mwOf[r.homeId + ':' + r.awayId] || 0) > maxMW - n);
 }
 
+// ═══════════════════════════════════════════════════
+// LIVE RESULTS — the table as it stands right now
+// ═══════════════════════════════════════════════════
+// Read-only by design. A live score is provisional in exactly the way the
+// settle window elsewhere exists to protect against, so it is layered over the
+// table for display and never written to STATE, data.json or any cache. Turn
+// the toggle off and every trace of it is gone.
+let _liveData = [];
+let _liveInclude = false;
+let _liveTimer = null;
+const LIVE_POLL_MS = 60000;
+
+async function loadLive() {
+  try {
+    const r = await fetch('/api/live');
+    _liveData = (await r.json()).live || [];
+  } catch (e) {
+    _liveData = [];
+  }
+  renderLiveStrip();
+  if (_liveInclude) renderTable();
+  // Only poll while something is actually being played.
+  clearTimeout(_liveTimer);
+  if (_liveData.length) _liveTimer = setTimeout(loadLive, LIVE_POLL_MS);
+}
+
+function setLiveInclude(on) {
+  _liveInclude = on;
+  renderTable();
+}
+
+// Live matches the table does not already contain. A fixture can finish and be
+// synced while the strip still holds it, and counting it twice would hand a
+// team six points for one win.
+function _liveUnplayed() {
+  if (!_liveInclude || !_liveData.length) return [];
+  const done = new Set(STATE.results.map(r => `${r.homeId}|${r.awayId}`));
+  return _liveData.filter(m => !done.has(`${m.homeId}|${m.awayId}`));
+}
+
+function renderLiveStrip() {
+  const el = document.getElementById('lv-strip');
+  if (!el) return;
+  if (!_liveData.length) { el.className = ''; el.innerHTML = ''; return; }
+  el.className = 'lv-strip';
+  el.innerHTML = _liveData.map(m => {
+    const h = teamMap[m.homeId], a = teamMap[m.awayId];
+    if (!h || !a) return '';
+    return `<div class="lv-match">
+      <span class="lv-dot"></span>
+      <span class="lv-crest" style="${_crest(m.homeId)}"></span>${h.short}
+      <strong>${m.homeGoals}–${m.awayGoals}</strong>
+      ${a.short}<span class="lv-crest" style="${_crest(m.awayId)}"></span>
+      <span class="lv-clock">${m.clock || ''}</span>
+    </div>`;
+  }).join('');
+}
+
 function renderTable() {
   const form = _tableMode === 'form';
-  const rows = buildTable(form ? _formResults(6) : STATE.results);
+  // Live scores join the standings only in the full view: "form over the last
+  // six" is a statement about finished matches.
+  const live = form ? [] : _liveUnplayed();
+  const base = form ? _formResults(6) : STATE.results;
+  const rows = buildTable(live.length ? base.concat(live) : base);
+  const liveTeams = new Set(live.flatMap(m => [m.homeId, m.awayId]));
+  // Where a team would sit without the match currently in progress, so the
+  // movement it is causing is visible rather than implied.
+  const settled = live.length
+    ? new Map(buildTable(base).map((r, i) => [r.id, i + 1])) : null;
   const proj = form ? null : computeAllProjections();
   const tbody = document.getElementById('table-body');
   tbody.innerHTML = '';
@@ -2719,9 +2813,15 @@ function renderTable() {
     const gdClass = gd > 0 ? 'gd-pos' : gd < 0 ? 'gd-neg' : 'gd-zero';
 
     const tr = document.createElement('tr');
-    tr.className = zoneClass;
+    tr.className = zoneClass + (liveTeams.has(row.id) ? ' lv-row' : '');
     tr.innerHTML = `
-      <td class="td-pos c">${pos}</td>
+      <td class="td-pos c">${pos}${(() => {
+        if (!settled || !liveTeams.has(row.id)) return '';
+        const was = settled.get(row.id);
+        if (was === pos) return '';
+        return `<span class="lv-delta ${was > pos ? 'lv-up' : 'lv-down'}">${
+          was > pos ? '▲' : '▼'}${Math.abs(was - pos)}</span>`;
+      })()}</td>
       <td class="td-bar"><div class="zone-bar" style="background:${barColor}"></div></td>
       <td>
         <div class="td-club">
@@ -2883,6 +2983,7 @@ Object.entries(TAB_GROUPS).forEach(([g, subs]) => subs.forEach(([s]) => { _group
 const _groupSub = Object.fromEntries(Object.entries(TAB_GROUPS).map(([g, s]) => [g, s[0][0]]));
 
 const TAB_INIT = {
+  table:         () => { renderTable(); loadLive(); },
   matchweek:     () => initMatchweek(),
   champanalysis: () => initAnalysisTab('champ'),
   planalysis:    () => { initAnalysisTab('pl'); loadPlayerRater(); },
