@@ -3369,7 +3369,7 @@ function renderMatchweekPage(mw) {
 // PLAYER RATER — Hull players vs league positional peers
 // ═══════════════════════════════════════════════════
 let _prData = null;
-const PR_POS_ORDER = ['G', 'CB', 'FB', 'CM', 'W', 'ST'];
+const PR_POS_ORDER = ['G', 'CB', 'FB', 'DM', 'CM', 'W', 'ST'];
 
 // Ratings are percentiles, so they are already on a 0-100 scale — but shown to
 // one decimal alongside a bare confidence percentage they read as two rival
@@ -3381,7 +3381,8 @@ function _score(v) {
   return Math.min(100, Math.max(1, Math.round(v)));
 }
 const PR_POS_NAME  = { G: 'Goalkeepers', CB: 'Centre-backs', FB: 'Full-backs',
-                       CM: 'Central midfielders', W: 'Wingers', ST: 'Forwards' };
+                       DM: 'Defensive midfielders', CM: 'Central midfielders',
+                       W: 'Wingers', ST: 'Forwards' };
 
 async function loadPlayerRater(force) {
   const body = document.getElementById('pr-body');

@@ -106,10 +106,17 @@ BASE_WEIGHTS = {
            "Progression": 2, "Security": 1, "Passing": 1},
     # A midfielder's job is control and creation: keep it, move it forward,
     # make chances, win it back.
-    # Central midfield — the job is control: keep it, move it forward, make
-    # chances, win it back. Defensive, central and attacking central mids are
-    # one group for now: only 8 defensive midfielders clear the minutes bar,
-    # and a peer group that small gives percentiles in 12-point steps.
+    # A holding midfielder's job is to break play up and give it to someone
+    # else. Attacking output is a bonus, not the brief, so Creation and
+    # Progression together are held under 10% — the previous single midfield
+    # group gave them 37%, which judged a destroyer on a playmaker's work.
+    # Defending is here and absent from CM: shielding the back four means
+    # blocking shots and clearing, which a No. 10 is not asked to do.
+    "DM": {"Ball-winning": 5, "Duels": 4, "Passing": 3, "Defending": 2,
+           "Security": 2, "Progression": 0.5, "Creation": 0.5},
+    # Central and attacking midfield — the job is control: keep it, move it
+    # forward, make chances, win it back. The possession weighting is right
+    # here in a way it was not for holding players, now they are rated apart.
     "CM": {"Passing": 4, "Creation": 4, "Progression": 3, "Ball-winning": 3,
            "Duels": 2, "Security": 2},
     # A winger creates and scores, and is judged much less on winning the ball
@@ -153,12 +160,13 @@ WEIGHTS = {
 }
 
 RATING_LABEL = {"G": "Goalkeeping", "CB": "Defending", "FB": "Full-back play",
-                "CM": "Control", "W": "Wing play", "ST": "Goal threat"}
+                "DM": "Screening", "CM": "Control", "W": "Wing play",
+                "ST": "Goal threat"}
 
 # The rating groups. Pulse reports a coarse position (G/D/M/F) and a detailed
 # role ("Left Full Back", "Centre Central Defender"); the detailed one is what
 # separates the two defensive jobs.
-ROLES = ("G", "CB", "FB", "CM", "W", "ST")
+ROLES = ("G", "CB", "FB", "DM", "CM", "W", "ST")
 
 # Full-backs cross; centre-backs do not. Used only for the handful of players
 # Pulse files as a bare "Defender" — the league medians are 2.5 crosses per 90
@@ -190,6 +198,8 @@ def _role(player: dict) -> str:
         return "W"
     if "Striker" in info or "Forward" in info:
         return "ST"
+    if "Defensive Midfielder" in info:
+        return "DM"
     if "Midfielder" in info:
         return "CM"
 
