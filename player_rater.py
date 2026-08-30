@@ -117,8 +117,14 @@ BASE_WEIGHTS = {
     # Central and attacking midfield — the job is control: keep it, move it
     # forward, make chances, win it back. The possession weighting is right
     # here in a way it was not for holding players, now they are rated apart.
-    "CM": {"Passing": 4, "Creation": 4, "Progression": 3, "Ball-winning": 3,
-           "Duels": 2, "Security": 2},
+    # Defending is here for the same reason it is in DM: a central midfielder
+    # blocks shots and clears in front of his back four, and the concept was
+    # simply absent. Adding it is what improved the rating's season-to-season
+    # stability (0.600 -> 0.639); merely reweighting toward duels and
+    # ball-winning without it did not (0.593), which is a different claim from
+    # "more defensive" and the one the evidence actually supports.
+    "CM": {"Ball-winning": 4, "Passing": 3, "Duels": 3, "Progression": 2.5,
+           "Creation": 3, "Defending": 2, "Security": 2},
     # A winger creates and scores, and is judged much less on winning the ball
     # back than a central midfielder is.
     "W":  {"Creation": 4, "Shooting": 3, "Progression": 3, "Passing": 1,
@@ -174,6 +180,61 @@ ROLES = ("G", "CB", "FB", "DM", "CM", "W", "ST")
 FB_CROSS_PER90 = 1.5
 
 
+# Reclassifying a midfielder by how he plays rather than how he is filed.
+#
+# The label is the prior and it is a good one: across 24/25 -> 25/26 a
+# player's Pulse role was identical 100% of the time, while a purely
+# data-driven classification agreed only 83-91% of the time. Overriding on
+# every disagreement would therefore swap a stable signal for a noisier one,
+# and it does not pay for itself — rating repeatability was 0.607 on labels
+# alone and 0.603-0.622 across every override threshold tried, all inside the
+# +/-0.09 noise band on 60-odd players.
+#
+# So the override fires only when the data is emphatic. Matt Crooks scores
+# +2.20 on this index, ahead of every player the feed actually files as a
+# defensive midfielder, while being listed as a central midfielder; rating him
+# against playmakers is simply wrong. At these thresholds the classification
+# still agrees with itself across seasons 92% of the time.
+ROLE_INDEX_DEF = ["effectiveTackles", "interceptions", "totalClearance",
+                  "blockedShots", "duelsWon", "aerialsWon"]
+ROLE_INDEX_ATT = ["shotAssists", "bigChancesCreated", "totalShots",
+                  "goalAssists", "touchesInOppBox"]
+ROLE_PROMOTE = 1.5     # labelled CM, plays as a screener -> DM
+ROLE_DEMOTE  = -1.0    # labelled DM, plays as a creator  -> CM
+
+
+def _role_index(players: list[dict], floor: float) -> None:
+    """
+    Store a defensive-minus-attacking z index on each qualified midfielder.
+
+    Only players over the same minutes floor the leaderboards use take part:
+    a per-90 built from a twenty-minute cameo says nothing about a role.
+    """
+    mids = [p for p in players
+            if "Midfielder" in (p.get("posInfo") or "")
+            and (p.get("stats", {}).get("minutes") or 0) >= floor]
+    for p in players:
+        p["_roleIndex"] = None
+    if len(mids) < 8:
+        return
+
+    def per90(stats, key):
+        mins = stats.get("minutes") or 0
+        return (stats.get(key) or 0) / mins * 90 if mins else 0.0
+
+    zs = {}
+    for key in ROLE_INDEX_DEF + ROLE_INDEX_ATT:
+        col = [per90(p["stats"], key) for p in mids]
+        mu  = _mean(col)
+        sd  = (_mean([(v - mu) ** 2 for v in col])) ** 0.5 or 1.0
+        zs[key] = [(v - mu) / sd for v in col]
+
+    for i, p in enumerate(mids):
+        d = _mean([zs[k][i] for k in ROLE_INDEX_DEF])
+        a = _mean([zs[k][i] for k in ROLE_INDEX_ATT])
+        p["_roleIndex"] = d - a
+
+
 def _role(player: dict) -> str:
     """
     Which peer group a player is rated against.
@@ -198,10 +259,15 @@ def _role(player: dict) -> str:
         return "W"
     if "Striker" in info or "Forward" in info:
         return "ST"
-    if "Defensive Midfielder" in info:
-        return "DM"
     if "Midfielder" in info:
-        return "CM"
+        labelled_dm = "Defensive Midfielder" in info
+        idx = player.get("_roleIndex")
+        if idx is not None:
+            if not labelled_dm and idx >= ROLE_PROMOTE:
+                return "DM"
+            if labelled_dm and idx <= ROLE_DEMOTE:
+                return "CM"
+        return "DM" if labelled_dm else "CM"
 
     # Bare "Defender"/"Midfielder"/"Forward" with no detail — fall back to the
     # coarse position, splitting defenders on crossing volume.
@@ -275,6 +341,11 @@ def _per90(stats: dict, key: str):
         return float(v)
     mins = stats.get("minutes") or 0
     return float(v) / mins * 90 if mins > 0 else None
+
+
+def _mean(xs) -> float:
+    xs = list(xs)
+    return sum(xs) / len(xs) if xs else 0.0
 
 
 def _percentile(value, pool) -> float:
@@ -360,6 +431,7 @@ def _rate_pool(players: list[dict], season: str = "2627",
 
     all_mins = [(p.get("stats", {}).get("minutes") or 0) for p in players]
     floor    = max(all_mins or [0]) * MIN_MINUTES_SHARE
+    _role_index(players, floor)
 
     by_pos = {}
     for pos in ROLES:
@@ -529,6 +601,10 @@ def player_derived(players: list[dict], target_team: str = "hull") -> dict:
     against league peers IN THE SAME ROLE so the numbers are comparable — a
     winger's crossing judged against wingers, not against centre-backs.
     """
+    _augment(players)
+    all_mins = [(p.get("stats", {}).get("minutes") or 0) for p in players]
+    _role_index(players, max(all_mins or [0]) * MIN_MINUTES_SHARE)
+
     by_pos = {}
     for p in players:
         if (p.get("stats", {}).get("minutes") or 0) > 0:
