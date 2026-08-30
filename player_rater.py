@@ -43,8 +43,11 @@ SHRINK_K = 450          # minutes at which a percentile keeps half its distance 
 # ── Concepts: raw stat keys grouped by what they actually measure ──────────
 # `neg` concepts are ones where MORE is worse; their percentile is inverted.
 CONCEPTS_OUT = {
+    # iboxShare is "does he shoot from good positions", which repeats (0.75).
+    # Conversion — whether those shots go in — does not (0.15) and is absent.
     "Shooting":     {"stats": ["totalShots", "shotsOnTarget", "attemptsIbox",
-                               "totalGoals", "bigChancesScored", "touchesInOppBox"],
+                               "totalGoals", "bigChancesScored", "touchesInOppBox",
+                               "iboxShare"],
                      "ctx": "att"},
     "Creation":     {"stats": ["shotAssists", "goalAssists", "bigChancesCreated",
                                "shotCreated", "penAreaEntries", "accurateCrosses"],
@@ -58,9 +61,12 @@ CONCEPTS_OUT = {
                      "ctx": "def"},
     "Defending":    {"stats": ["totalClearance", "headClearances", "blockedShots",
                                "blockedCrosses"], "ctx": "def"},
-    "Duels":        {"stats": ["duelsWon", "aerialsWon"], "ctx": "def"},
+    # Volume AND success rate: how often he contests, and whether he wins.
+    "Duels":        {"stats": ["duelsWon", "aerialsWon",
+                               "duelWinPct", "aerialWinPct"], "ctx": "def"},
     "Security":     {"stats": ["possLost", "dispossessed", "unsuccessfulTouch",
-                               "errorLeadToShot", "fouls"], "ctx": "att", "neg": True},
+                               "errorLeadToShot", "fouls", "turnoverRate"],
+                     "ctx": "att", "neg": True},
 }
 
 CONCEPTS_GK = {
@@ -108,8 +114,8 @@ BASE_WEIGHTS = {
 # finding that save efficiency barely persists (r=0.038); revisit with more
 # seasons.
 REPEATABILITY = {
-    "Passing": 1.00, "Shooting": 0.94, "Duels": 0.94, "Defending": 0.90,
-    "Ball-winning": 0.84, "Security": 0.78, "Creation": 0.74,
+    "Passing": 1.00, "Duels": 0.93, "Shooting": 0.92, "Defending": 0.89,
+    "Ball-winning": 0.87, "Security": 0.82, "Creation": 0.74,
     "Progression": 1.00,
 }
 
@@ -122,7 +128,56 @@ WEIGHTS = {
 RATING_LABEL = {"G": "Goalkeeping", "D": "Defending", "M": "Influence", "F": "Goal threat"}
 
 # Stats already expressed as a rate — must not be divided by minutes again.
-RATE_STATS = {"passPct", "savePct", "tacklePct", "shotPct", "goalConversion"}
+RATE_STATS = {"passPct", "savePct", "tacklePct", "shotPct", "goalConversion",
+               "duelWinPct", "aerialWinPct", "turnoverRate", "iboxShare"}
+
+
+# Derived per-opportunity rates, injected into every player's stat block.
+#
+# The concepts were built almost entirely from VOLUME: duelsWon but never
+# duelsLost, so a defender who contests ten duels and wins eight scores the
+# same as one who contests ten and wins three. That measures how often a
+# player engages, which is largely a function of how his team plays, rather
+# than whether he wins when he does.
+#
+# Only rates that survive the repeatability test are here (player_repeatability
+# on 176 same-club players, 2024/25 → 2025/26):
+#
+#   turnoverRate   r=0.92     duelWinPct    r=0.85     iboxShare  r=0.75
+#   aerialWinPct   r=0.72
+#
+# Deliberately EXCLUDED, having failed the same test: tackle success (0.13),
+# goal conversion (0.15), shot accuracy (0.30) and cross accuracy (-0.05).
+# These are the player-level echo of the team-level finding that volume and
+# territory persist while conversion efficiency does not — a defender's 100%
+# tackle record over two games is noise, and weighting it would be building
+# the rating out of luck.
+DERIVED_RATES = {
+    "duelWinPct":   lambda s: _share(s.get("duelsWon"),
+                                     (s.get("duelsWon") or 0) + (s.get("duelsLost") or 0)),
+    "aerialWinPct": lambda s: _share(s.get("aerialsWon"),
+                                     (s.get("aerialsWon") or 0) + (s.get("aerialsLost") or 0)),
+    # Expressed as loss rather than retention so it sits in Security, whose
+    # percentiles are inverted; the two are the same measurement.
+    "turnoverRate": lambda s: _share(s.get("possLost"), s.get("touches")),
+    "iboxShare":    lambda s: _share(s.get("attemptsIbox"), s.get("totalShots")),
+}
+
+
+def _share(num, den):
+    if num is None or not den:
+        return None
+    return 100.0 * float(num) / float(den)
+
+
+def _augment(players: list[dict]) -> None:
+    """Add the derived rates to each player's stat block, in place."""
+    for p in players:
+        st = p.get("stats")
+        if not st:
+            continue
+        for key, fn in DERIVED_RATES.items():
+            st[key] = fn(st)
 
 
 def _per90(stats: dict, key: str):
@@ -214,6 +269,7 @@ def _rate_pool(players: list[dict], season: str = "2627",
     keeps it and lets the callers filter.
     """
     ctx = team_context(season) if adjust_context else {}
+    _augment(players)
 
     all_mins = [(p.get("stats", {}).get("minutes") or 0) for p in players]
     floor    = max(all_mins or [0]) * MIN_MINUTES_SHARE
