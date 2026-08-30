@@ -88,6 +88,11 @@ def fetch(season: str = "2627", force: bool = False) -> dict:
                 "teamId":    tl.get("teamId"),
                 "formation": form.get("label"),
                 "rows":      [[int(p) for p in row] for row in form["players"]],
+                # Opta's own coarse position for that match (G/D/M/F). Kept so
+                # the shape mapping can be audited without re-fetching: it is
+                # the only independent check on whether a slot was read right.
+                "pos":       {str(int(pl["id"])): pl.get("matchPosition")
+                              for pl in (tl.get("lineup") or []) if pl.get("id")},
             })
         cached[key] = sides
         fetched += 1
