@@ -3422,10 +3422,11 @@ function _hybridTag(p) {
   // rank against — worth showing, since it is a real part of what he plays.
   const alias = p.aliasRoles && Object.entries(p.aliasRoles);
   if (alias && alias.length) {
-    const txt = alias.sort((a, b) => b[1] - a[1])
-      .map(([r, w]) => `${r} ${Math.round(w * 100)}%`).join(', ');
-    out += `<span class="pr-hybrid pr-alias" title="Started ${txt} of his matches there. Rated among ${
-      p.pos} only because that pool is large enough to rank against.">${p.pos} (${txt})</span>`;
+    const sorted = alias.sort((a, b) => b[1] - a[1]);
+    const badge = sorted.map(([r, w]) => `${r} ${Math.round(w * 100)}%`).join(', ');
+    const said  = sorted.map(([r, w]) => `${Math.round(w * 100)}% of his starts at ${r}`).join(', ');
+    out += `<span class="pr-hybrid pr-alias" title="Made ${said}. Rated among ${
+      p.pos} only because that pool is large enough to rank against.">${p.pos} (${badge})</span>`;
   }
   return out;
 }
