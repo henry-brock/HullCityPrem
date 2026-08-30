@@ -1241,6 +1241,16 @@
       font-size: 0.64rem; font-variant-numeric: tabular-nums;
     }
     .pr-dim { color: var(--text-secondary); }
+    .lb-crest {
+      display: inline-block; width: 18px; height: 18px; margin-right: 7px;
+      vertical-align: -4px; border-radius: 3px;
+    }
+    .lb-gap td {
+      font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--text-secondary); padding-top: 10px; text-align: left;
+    }
+    .pr-rank { font-variant-numeric: tabular-nums; }
+    .pr-rank small { color: var(--text-secondary); font-size: 0.85em; }
     .pr-conf { font-size: 0.6rem; color: var(--text-secondary); margin-left: 3px; }
     .pr-pill {
       display: inline-block; min-width: 26px; padding: 2px 5px; border-radius: 4px;
@@ -2113,6 +2123,18 @@
     </div>
   </section>
 
+  <!-- ═══ LEAGUE LEADERS ═══ -->
+  <section id="tab-leaders" class="section">
+    <div class="card">
+      <div class="card-header" style="background:linear-gradient(90deg,#0a001a,#1a003a)">
+        <span class="card-title" style="color:#F5A12D">League Leaders — best rated player in each position</span>
+        <span id="lb-meta" style="font-size:0.72rem;color:var(--text-secondary)"></span>
+      </div>
+      <div id="lb-body"><div class="sa-empty">Loading league leaders…</div></div>
+    </div>
+  </section>
+
+
 </div>
 
 <!-- ═══ IMPORT MODAL ═══ -->
@@ -2819,6 +2841,7 @@ const TAB_GROUPS = {
               ['simulate',      'Run & Projection'],
               ['accuracy',      'Model Accuracy']],
   squad:     [['planalysis',    'Premier League 26/27'],
+              ['leaders',       'League Leaders'],
               ['champanalysis', 'Championship 25/26']],
   analytics: [['styles',        'Styles'],
               ['teamstats',     'Team Stats'],
@@ -2835,6 +2858,7 @@ const TAB_INIT = {
   matchweek:     () => initMatchweek(),
   champanalysis: () => initAnalysisTab('champ'),
   planalysis:    () => { initAnalysisTab('pl'); loadPlayerRater(); },
+  leaders:       () => loadLeaders(),
   styles:        () => initStylesTab(),
   survival:      () => initSurvivalTab(),
   home:          () => renderDashboard(),
@@ -3439,7 +3463,7 @@ function renderPlayerRater() {
         <div style="overflow-x:auto">
         <table class="pr-tbl">
           <thead><tr>
-            <th style="text-align:left">Player</th><th>Mins</th><th>Form</th><th>Rating</th>
+            <th style="text-align:left">Player</th><th>Mins</th><th>Form</th><th>Rating</th><th title="Rank among qualified Premier League players in this position, and the percentile against every peer with minutes">In league</th>
             ${cols.map(c => `<th title="${negSet.has(c) ? c + ' — fewer is better, already inverted' : c}">${c}${negSet.has(c) ? ' ↓' : ''}</th>`).join('')}
           </tr></thead>
           <tbody>
@@ -3454,6 +3478,10 @@ function renderPlayerRater() {
                   <span style="font-weight:800">${p.rating.toFixed(1)}</span>
                   <span class="pr-conf" title="Confidence from minutes played — the rating is pulled toward 50 until there is enough evidence">${p.confidence}%</span>
                 </td>
+                <td class="pr-rank">${p.leagueRank
+                  ? `<strong>${p.leagueRank}</strong><small>/${p.leagueOf}</small>`
+                  : `<span class="pr-dim" title="Below the minutes needed to be ranked">–</span>`}
+                  ${p.leaguePct != null ? `<small> · ${p.leaguePct.toFixed(0)}th</small>` : ''}</td>
                 ${cols.map(c => {
                   const v = p.concepts[c];
                   if (v == null) return '<td class="pr-dim">—</td>';
@@ -3483,6 +3511,99 @@ function renderPlayerRater() {
       </div>
     </div>`;
 }
+
+// ═══════════════════════════════════════════════════
+// LEAGUE LEADERS — the top ten at each position
+// ═══════════════════════════════════════════════════
+// A Hull player's rating means little on its own: "62" is only interesting
+// once you know what a good one looks like. These are the same ratings the
+// squad table shows, computed over every player in the league.
+//
+// Ordered by the SHRUNK rating, not the raw one. Raw would hand the top spot
+// to whoever had the best twenty minutes of the season, which is precisely the
+// mistake the shrink exists to prevent.
+async function loadLeaders() {
+  if (!_prData) await loadPlayerRater();
+  renderLeaders();
+}
+
+function renderLeaders() {
+  const body = document.getElementById('lb-body');
+  const meta = document.getElementById('lb-meta');
+  if (!body) return;
+  const leaders = _prData && _prData.leaders;
+  if (!_prData || _prData.error || !leaders) {
+    if (meta) meta.textContent = '';
+    body.innerHTML = `<div class="sa-empty">${_prData && _prData.error
+      ? 'Rating failed: ' + _prData.error
+      : 'No rated players yet — leaders appear once the season is under way.'}</div>`;
+    return;
+  }
+
+  const share = Math.round((_prData.minShare || 0.4) * 100);
+  const qualified = PR_POS_ORDER.reduce((n, pos) =>
+    n + ((leaders[pos] || [])[0] ? leaders[pos][0].leagueOf : 0), 0);
+  meta.textContent = `${qualified} qualified players · ranked against ${_prData.pool} with minutes`;
+
+  const nameOf = id => (TEAMS.find(t => t.id === id) || {}).name || id || '—';
+
+  const sections = PR_POS_ORDER.filter(pos => (leaders[pos] || []).length).map(pos => {
+    const rows = leaders[pos];
+    // If nobody from Hull made the ten, show their best at that position
+    // anyway — the gap to the top is the whole point of the comparison.
+    const hullIn = rows.some(r => r.team === 'hull');
+    const best   = (_prData.players || [])
+      .filter(p => p.pos === pos && p.leagueRank)
+      .sort((a, b) => a.leagueRank - b.leagueRank)[0];
+    const extra  = (!hullIn && best) ? best : null;
+
+    const line = (r, dim) => `
+      <tr style="${r.team === 'hull' ? 'background:rgba(245,161,45,0.10)' : ''}">
+        <td class="pr-dim" style="text-align:center">${dim ? '·' : r.leagueRank}</td>
+        <td style="text-align:left">
+          <span class="lb-crest" style="${_crest(r.team)}"></span>${r.name}
+        </td>
+        <td class="pr-dim" style="text-align:left">${nameOf(r.team)}</td>
+        <td class="pr-dim">${r.minutes}</td>
+        <td><strong style="color:${_prColor(r.ratingRaw)}">${r.ratingRaw.toFixed(0)}</strong></td>
+        <td>
+          <span style="font-weight:800">${r.rating.toFixed(1)}</span>
+          <span class="pr-conf" title="Confidence from minutes played">${r.confidence}%</span>
+        </td>
+      </tr>`;
+
+    return `
+      <div class="pr-sec">
+        <div class="pr-sec-h">${PR_POS_NAME[pos]}
+          <span>${rows[0].label} · ${rows[0].leagueOf} qualified</span></div>
+        <div style="overflow-x:auto">
+        <table class="pr-tbl">
+          <thead><tr>
+            <th style="width:34px">#</th><th style="text-align:left">Player</th>
+            <th style="text-align:left">Club</th><th>Mins</th><th>Form</th><th>Rating</th>
+          </tr></thead>
+          <tbody>
+            ${rows.map(r => line(r, false)).join('')}
+            ${extra ? `<tr class="lb-gap"><td colspan="6">Hull's best ${PR_POS_NAME[pos].toLowerCase().replace(/s$/, '')}</td></tr>${line(extra, false)}` : ''}
+          </tbody>
+        </table></div>
+      </div>`;
+  }).join('');
+
+  body.innerHTML = `
+    <div style="padding:0 16px 18px">
+      <div class="pr-note">
+        The same percentile ratings as the squad page, over every player in the league.
+        <strong>Form</strong> is what a player has actually done; <strong>Rating</strong> pulls that
+        toward average by how little has been seen of them, and the table is ordered by Rating —
+        so early in a season this reads as "best, given the evidence" rather than "best".
+        A player qualifies at <strong>${share}% of the minutes of the league's most-used player</strong>,
+        which keeps one bright cameo out of the top ten.
+      </div>
+      ${sections}
+    </div>`;
+}
+
 
 // ═══════════════════════════════════════════════════
 // RIVAL TRACKER — the relegation race, and the games between them

@@ -196,17 +196,29 @@ def team_context(season: str = "2627") -> dict:
     return out
 
 
-def rate(players: list[dict], target_team: str = "hull", season: str = "2627",
-         adjust_context: bool = True) -> list[dict]:
-    """
-    Rate `target_team`'s players against league positional peers.
+# A leaderboard needs a floor: with two games played, a 20-minute substitute
+# who touched the ball twice can post a spectacular per-90. Expressed as a
+# share of the most-used player's minutes so it scales with the season instead
+# of needing to be re-tuned — 40% is roughly "a regular", not "an ever-present".
+MIN_MINUTES_SHARE = 0.4
 
-    `players` is the whole-league pool (pl_players.fetch()["players"]). Returns
-    the target team's players with per-concept percentiles and an overall rating.
+
+def _rate_pool(players: list[dict], season: str = "2627",
+               adjust_context: bool = True) -> dict:
+    """
+    Rate EVERY player in the pool against their league positional peers.
+
+    The percentile work was always league-wide; the previous version computed
+    it across all peers and then discarded everyone outside the target team.
+    That discarded figure is exactly what a league ranking needs, so this
+    keeps it and lets the callers filter.
     """
     ctx = team_context(season) if adjust_context else {}
 
-    out = []
+    all_mins = [(p.get("stats", {}).get("minutes") or 0) for p in players]
+    floor    = max(all_mins or [0]) * MIN_MINUTES_SHARE
+
+    by_pos = {}
     for pos in ("G", "D", "M", "F"):
         concepts = CONCEPTS_GK if pos == "G" else CONCEPTS_OUT
         weights  = WEIGHTS[pos]
@@ -229,10 +241,9 @@ def rate(players: list[dict], target_team: str = "hull", season: str = "2627",
                     col.append(v)
                 vals[key] = col
 
+        rows = []
         for i, p in enumerate(peers):
-            if p.get("team") != target_team:
-                continue
-            mins = p.get("stats", {}).get("minutes") or 0
+            mins   = p.get("stats", {}).get("minutes") or 0
             shrink = mins / (mins + SHRINK_K)
 
             # Concepts keep their RAW percentile — they describe what the player
@@ -256,9 +267,10 @@ def rate(players: list[dict], target_team: str = "hull", season: str = "2627",
                     wtot += w
 
             raw_rating = wsum / wtot if wtot else None
-            out.append({
+            rows.append({
                 "id":        p.get("id"),
                 "name":      p.get("name"),
+                "team":      p.get("team"),
                 "pos":       pos,
                 "shirt":     p.get("shirt"),
                 "minutes":   mins,
@@ -269,7 +281,47 @@ def rate(players: list[dict], target_team: str = "hull", season: str = "2627",
                 "concepts":  scores,
                 "peers":     len(peers),
                 "confidence": round(shrink * 100),
+                "qualified": mins >= floor and raw_rating is not None,
             })
+
+        # League order: the SHRUNK rating, so a player cannot top the table on
+        # 20 minutes. Within the squad view the raw figure still does the
+        # sorting, because there the whole point is to compare team-mates who
+        # have all played a similar amount.
+        rows.sort(key=lambda r: -(r["rating"] if r["rating"] is not None else -1))
+        rank = 0
+        for r in rows:
+            if r["qualified"]:
+                rank += 1
+                r["leagueRank"] = rank
+            else:
+                r["leagueRank"] = None
+        qualified = rank
+        for r in rows:
+            r["leagueOf"] = qualified
+            # Percentile against every peer who has played at all, qualified
+            # or not — "better than N% of the league's midfielders".
+            r["leaguePct"] = round(_percentile(
+                r["ratingRaw"], [q["ratingRaw"] for q in rows]), 1) \
+                if r["ratingRaw"] is not None else None
+
+        by_pos[pos] = rows
+
+    return by_pos
+
+
+def rate(players: list[dict], target_team: str = "hull", season: str = "2627",
+         adjust_context: bool = True) -> list[dict]:
+    """
+    Rate `target_team`'s players against league positional peers.
+
+    `players` is the whole-league pool (pl_players.fetch()["players"]). Returns
+    the target team's players with per-concept percentiles, an overall rating,
+    and where that rating places them in the league at their position.
+    """
+    out = [dict(r)
+           for rows in _rate_pool(players, season, adjust_context).values()
+           for r in rows if r.get("team") == target_team]
 
     # Rank on the unshrunk figure: early in a season the shrunk ratings are all
     # ~50 by design, so sorting on them would order the squad by minutes played.
@@ -278,6 +330,13 @@ def rate(players: list[dict], target_team: str = "hull", season: str = "2627",
     for i, p in enumerate(out, 1):
         p["squadRank"] = i
     return out
+
+
+def leaderboard(players: list[dict], season: str = "2627", top: int = 10,
+                adjust_context: bool = True) -> dict:
+    """Top `top` qualified players at each position, league-wide."""
+    return {pos: [r for r in rows if r["qualified"]][:top]
+            for pos, rows in _rate_pool(players, season, adjust_context).items()}
 
 
 # ── Per-opportunity player metrics ────────────────────────────────────────

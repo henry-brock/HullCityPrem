@@ -141,8 +141,8 @@ def rate_players():
     force  = request.args.get("force") == "1"
     try:
         from pl_players import fetch as fetch_pool
-        from player_rater import (CONCEPTS_GK, CONCEPTS_OUT, WEIGHTS, rate,
-                                  player_derived)
+        from player_rater import (CONCEPTS_GK, CONCEPTS_OUT, MIN_MINUTES_SHARE,
+                                  WEIGHTS, leaderboard, rate, player_derived)
 
         pool = fetch_pool(season=season, force=force)["players"]
         rows = rate(pool, target_team=team, season=season)
@@ -151,6 +151,9 @@ def rate_players():
             "team":    team,
             "players": rows,
             "derived": player_derived(pool, target_team=team),
+            # League top tens, so a squad rating has something to sit against.
+            "leaders": leaderboard(pool, season=season, top=10),
+            "minShare": MIN_MINUTES_SHARE,
             "pool":    sum(1 for p in pool if (p.get("stats") or {}).get("minutes", 0) > 0),
             "concepts": {
                 "G": list(CONCEPTS_GK),
