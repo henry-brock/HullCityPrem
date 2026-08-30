@@ -126,9 +126,14 @@ def slot_role(rows: list[list[int]], row_i: int, slot_i: int) -> str:
         # one or two is central.
         return "W" if (width >= 3 and edge) else "ST"
 
-    # Wing-backs: the wide players in the line immediately ahead of a back three.
+    # Wing-backs: the wide players in the line immediately ahead of a back
+    # three. Their own role, not full-backs: one man covers the whole flank
+    # with three centre-backs behind him rather than two, so he starts higher
+    # and is asked for more of the attacking width. Opta files them as
+    # midfielders, which is the single systematic disagreement between this
+    # mapping and its coarse position field.
     if line == 1 and back == 3 and width >= 4 and edge:
-        return "FB"
+        return "WB"
 
     mid_lines = lines - 2
     if mid_lines >= 2 and line == 1:

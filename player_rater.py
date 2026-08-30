@@ -105,6 +105,7 @@ BASE_WEIGHTS = {
     # the crossing and overlapping that is genuinely part of the job.
     "FB": {"Defending": 3, "Duels": 3, "Ball-winning": 3, "Creation": 3,
            "Progression": 2, "Security": 1, "Passing": 1},
+
     # A midfielder's job is control and creation: keep it, move it forward,
     # make chances, win it back.
     # A holding midfielder's job is to break play up and give it to someone
@@ -188,6 +189,20 @@ RATING_LABEL = {"G": "Goalkeeping", "CB": "Defending", "FB": "Full-back play",
 # role ("Left Full Back", "Centre Central Defender"); the detailed one is what
 # separates the two defensive jobs.
 ROLES = ("G", "CB", "FB", "DM", "CM", "AM", "W", "ST")
+
+# Roles the formation mapping distinguishes but the rating pools cannot.
+#
+# A wing-back in a back three is a real and separate job — he starts higher
+# than a full-back because there are three centre-backs behind him instead of
+# two — and lineups.py labels him correctly, which the Formations view uses.
+# The rating cannot follow: only four wing-backs a season clear the minutes
+# floor, giving percentiles in 25-point steps, well below the 16-19 that was
+# already too thin to justify an attacking-midfield group.
+#
+# Note this never touched a back FIVE. There the wide players sit in the
+# defensive line and have always been full-backs, which is the right answer:
+# a 5-4-1's wide men defend where a 3-4-3's attack.
+ROLE_ALIASES = {"WB": "FB"}
 
 # Full-backs cross; centre-backs do not. Used only for the handful of players
 # Pulse files as a bare "Defender" — the league medians are 2.5 crosses per 90
@@ -309,13 +324,17 @@ def _attach_derived(players: list[dict], season: str) -> None:
         p["_hybrid"] = False
         if not d or d["starts"] < MIN_STARTS_FOR_ROLE:
             continue
-        total = sum(d["mix"].values())
-        mix = {r: n / total for r, n in d["mix"].items()
+        merged = {}
+        for r, n in d["mix"].items():
+            merged[ROLE_ALIASES.get(r, r)] = merged.get(ROLE_ALIASES.get(r, r), 0) + n
+        total = sum(merged.values())
+        mix = {r: n / total for r, n in merged.items()
                if n / total >= MIN_BLEND_SHARE}
         if not mix:
             continue
-        p["_derivedRole"] = d["role"]
-        p["_hybrid"] = d["share"] < MIN_ROLE_SHARE and len(mix) > 1
+        top = max(mix, key=lambda r: mix[r])
+        p["_derivedRole"] = top
+        p["_hybrid"] = mix[top] < MIN_ROLE_SHARE and len(mix) > 1
         p["_roleMix"] = mix if p["_hybrid"] else None
 
 
