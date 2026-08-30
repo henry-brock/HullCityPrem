@@ -1283,6 +1283,24 @@
     .lv-crest { width: 15px; height: 15px; display: inline-block; vertical-align: -3px; }
     tr.lv-row td { box-shadow: inset 3px 0 0 #dc143c; }
     .lv-delta { font-size: 0.62rem; margin-left: 5px; font-weight: 700; }
+    .lvs-panel {
+      margin: 12px 0 4px; border: 1px solid rgba(220,20,60,0.30); border-radius: 7px;
+      background: rgba(220,20,60,0.06); overflow: hidden;
+    }
+    .lvs-head {
+      display: flex; align-items: center; gap: 9px; padding: 8px 12px;
+      background: rgba(220,20,60,0.10); font-size: 0.8rem;
+    }
+    .lvs-tbl { width: 100%; }
+    .lvs-tbl td { padding: 3px 6px; border: none; font-size: 0.74rem; }
+    .lvs-bar {
+      height: 6px; border-radius: 3px; background: rgba(255,255,255,0.09); overflow: hidden;
+    }
+    .lvs-fill { height: 100%; background: #F5A12D; }
+    .lvs-note {
+      padding: 7px 12px 9px; font-size: 0.66rem; line-height: 1.5;
+      color: var(--text-secondary);
+    }
     .lv-up { color: #22c55e; } .lv-down { color: #dc143c; }
     .pr-rank small { color: var(--text-secondary); font-size: 0.85em; }
     .pr-conf { font-size: 0.6rem; color: var(--text-secondary); margin-left: 3px; }
@@ -4033,6 +4051,7 @@ async function loadScout(which) {
   // Both sub-tabs need styles + derived; fetch once, reuse after.
   if (!_stylesData) { try { _stylesData = (await (await fetch('/api/styles')).json()).teams || []; } catch (e) {} }
   if (!_dvData)     { try { _dvData = await (await fetch('/api/derived?season=2627')).json(); } catch (e) {} }
+  await loadScoutLive(which);
 
   if (which === 'scoutpick') {
     _renderScoutPicker();
@@ -4040,6 +4059,80 @@ async function loadScout(which) {
   } else {
     renderScout(_hullNextOpponent(), 'scout');
   }
+}
+
+// Scouting a side while it plays. Same read-only rule as the table: this is
+// the match as it stands, never stored, and explicitly labelled provisional —
+// a team defending a 5-1 lead posts numbers that describe the scoreline rather
+// than the team.
+let _scoutLive = [];
+let _scoutLiveTimer = null;
+
+async function loadScoutLive(which) {
+  try {
+    const r = await fetch('/api/live?detail=1');
+    const d = await r.json();
+    if (r.ok && !d.error) _scoutLive = d.live || [];
+  } catch (e) { /* keep what we have */ }
+  clearTimeout(_scoutLiveTimer);
+  if (_scoutLive.length) {
+    _scoutLiveTimer = setTimeout(() => loadScoutLive(which).then(() => {
+      const id = which === 'scoutpick' ? (_scoutPicked || _hullNextOpponent())
+                                       : _hullNextOpponent();
+      renderScout(id, which);
+    }), LIVE_POLL_MS);
+  }
+}
+
+function _scoutLiveFor(teamId) {
+  return _scoutLive.find(m => m.homeId === teamId || m.awayId === teamId) || null;
+}
+
+function _scoutLivePanel(teamId) {
+  const m = _scoutLiveFor(teamId);
+  if (!m) return '';
+  const isHome = m.homeId === teamId;
+  const them = teamMap[teamId], opp = teamMap[isHome ? m.awayId : m.homeId];
+  if (!them || !opp) return '';
+  const gf = isHome ? m.homeGoals : m.awayGoals;
+  const ga = isHome ? m.awayGoals : m.homeGoals;
+  const st = m.stats;
+  const shape = m.formations && m.formations[teamId];
+  const oppShape = m.formations && m.formations[isHome ? m.awayId : m.homeId];
+
+  const rows = st ? st.labels.map((lab, i) => {
+    const mine  = isHome ? st.home[i] : st.away[i];
+    const other = isHome ? st.away[i] : st.home[i];
+    if (mine == null && other == null) return '';
+    const a = Number(mine || 0), b = Number(other || 0);
+    const pct = (a + b) ? (a / (a + b)) * 100 : 50;
+    return `<tr>
+      <td style="text-align:right;width:60px"><strong>${mine ?? '–'}</strong></td>
+      <td style="width:46%">
+        <div class="lvs-bar"><div class="lvs-fill" style="width:${pct.toFixed(0)}%"></div></div>
+      </td>
+      <td class="pr-dim" style="text-align:left;width:60px">${other ?? '–'}</td>
+      <td class="pr-dim" style="text-align:left;font-size:0.68rem">${lab}</td>
+    </tr>`;
+  }).join('') : '';
+
+  return `
+    <div class="lvs-panel">
+      <div class="lvs-head">
+        <span class="lv-dot"></span>
+        <strong>Playing now</strong>
+        <span>${them.short} ${gf}–${ga} ${opp.short}</span>
+        <span class="lv-clock">${m.clock || ''}</span>
+        ${shape ? `<span class="fm-chip">${shape}</span>` : ''}
+        ${oppShape ? `<span class="fm-chip" style="opacity:0.6">v ${oppShape}</span>` : ''}
+      </div>
+      ${rows ? `<table class="pr-tbl lvs-tbl"><tbody>${rows}</tbody></table>` : ''}
+      <div class="lvs-note">
+        Provisional and not saved anywhere. Mid-match numbers describe the state of
+        the game as much as the team — a side protecting a lead concedes possession
+        and stops shooting — so read this as what is happening, not as form.
+      </div>
+    </div>`;
 }
 
 function _hullNextOpponent() {
@@ -4100,6 +4193,7 @@ function renderScout(teamId, which) {
 
   body.innerHTML = `
     <div style="padding:0 16px 18px">
+      ${_scoutLivePanel(teamId)}
       <div class="sc-head">
         <div class="badge" style="background:${t.col};color:${t.txt};width:44px;height:44px;font-size:0.8rem;flex-shrink:0;${_crest(t.id)}"></div>
         <div>

@@ -368,6 +368,55 @@ def hull_analysis(league):
         return jsonify({"players": [], "error": str(exc)}), 500
 
 
+# Stats worth watching mid-match, in the order Scout shows them.
+LIVE_STATS = [
+    ("possession_percentage", "Possession %"),
+    ("total_scoring_att",     "Shots"),
+    ("ontarget_scoring_att",  "On target"),
+    ("attempts_ibox",         "Shots in box"),
+    ("big_chance_created",    "Big chances"),
+    ("touches_in_opp_box",    "Touches in box"),
+    ("total_cross",           "Crosses"),
+    ("won_corners",           "Corners"),
+    ("total_pass",            "Passes"),
+    ("total_tackle",          "Tackles"),
+    ("total_clearance",       "Clearances"),
+]
+
+
+def _live_detail(fixture_id: int, ids: list) -> dict:
+    """Formations and a readable slice of the live Opta blocks."""
+    from lineups import _team_map
+    from pulse_results import _fetch_match_stats
+    from pl_players import _pulse_get
+
+    out = {"stats": None, "formations": None}
+    try:
+        blocks = _fetch_match_stats(fixture_id)
+        names  = _team_map("2627")
+        by_id  = {names.get(int(t)): b for t, b in blocks.items() if names.get(int(t))}
+        if by_id:
+            out["stats"] = {
+                "labels": [lab for _, lab in LIVE_STATS],
+                "home":   [(by_id.get(ids[0]) or {}).get(k) for k, _ in LIVE_STATS],
+                "away":   [(by_id.get(ids[1]) or {}).get(k) for k, _ in LIVE_STATS],
+            }
+    except Exception:
+        pass
+    try:
+        fx = _pulse_get(f"fixtures/{fixture_id}")
+        names = _team_map("2627")
+        form = {}
+        for tl in fx.get("teamLists") or []:
+            tid = names.get(int(tl.get("teamId")))
+            if tid:
+                form[tid] = (tl.get("formation") or {}).get("label")
+        out["formations"] = form or None
+    except Exception:
+        pass
+    return out
+
+
 @app.route("/api/live")
 def live_matches():
     """
@@ -393,14 +442,20 @@ def live_matches():
             ids = [_name_to_id(_team_name(s.get("team", {}))) for s in sides]
             if not all(ids):
                 continue
-            out.append({
+            rec = {
                 "homeId":    ids[0],
                 "awayId":    ids[1],
                 "homeGoals": int(sides[0].get("score") or 0),
                 "awayGoals": int(sides[1].get("score") or 0),
                 "clock":     (f.get("clock") or {}).get("label", ""),
                 "phase":     f.get("phase"),
-            })
+            }
+            # The stat blocks and shape cost an extra request per match, so
+            # they are opt-in: the table only needs the score, Scout wants the
+            # game as it unfolds.
+            if request.args.get("detail") == "1":
+                rec.update(_live_detail(int(f["id"]), ids))
+            out.append(rec)
         return jsonify({"live": out})
     except Exception as exc:
         return jsonify({"live": [], "error": str(exc)}), 500
