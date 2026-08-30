@@ -4106,7 +4106,9 @@ function renderTeamStats() {
 
   const minGames = Math.min(...ids.map(t => teams[t].games));
   const maxGames = Math.max(...ids.map(t => teams[t].games));
-  meta.textContent = `${matches} match${matches === 1 ? '' : 'es'} played · ${ids.length}/20 teams with data`;
+  // Every value here is a PER-GAME average, including counting stats: two
+  // clean sheets in two games reads as 1.0, which is baffling unless said.
+  meta.textContent = `${matches} match${matches === 1 ? '' : 'es'} played · ${ids.length}/20 teams with data · all values are per-game averages`;
 
   const filter   = (document.getElementById('ts-filter').value || '').toLowerCase().trim();
   const hullOnly = document.getElementById('ts-hullonly').checked;
