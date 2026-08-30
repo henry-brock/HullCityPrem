@@ -123,8 +123,17 @@ BASE_WEIGHTS = {
     # stability (0.600 -> 0.639); merely reweighting toward duels and
     # ball-winning without it did not (0.593), which is a different claim from
     # "more defensive" and the one the evidence actually supports.
-    "CM": {"Ball-winning": 4, "Passing": 3, "Duels": 3, "Progression": 2.5,
-           "Creation": 3, "Defending": 2, "Security": 2},
+    #
+    # The attacking side was then cut further (27% -> 20%), because the old
+    # weighting had been set for a pool that still contained attacking
+    # midfielders. Within their shared pool the genuine central midfielders
+    # sit at 67 for Defending and 59 for Duels against 46 and 43 for the
+    # attacking ones, so scoring them at 10% and 16% undersold the job.
+    # Repeatability 0.678 -> 0.706. It stops there rather than going further:
+    # at 62% defensive the group becomes indistinguishable from DM's 64%, and
+    # two roles with the same weighting are not two roles.
+    "CM": {"Ball-winning": 4, "Duels": 3.5, "Defending": 3, "Passing": 3,
+           "Progression": 2, "Creation": 2, "Security": 2},
     # A winger creates and scores, and is judged much less on winning the ball
     # back than a central midfielder is.
     "W":  {"Creation": 4, "Shooting": 3, "Progression": 3, "Passing": 1,
