@@ -86,12 +86,20 @@ CONCEPTS_GK = {
 BASE_WEIGHTS = {
     "G": {"Shot-stopping": 5, "Claiming": 2, "Sweeping": 1, "Distribution": 2,
           "Conceding": 3},
-    "D": {"Defending": 4, "Duels": 4, "Ball-winning": 3, "Passing": 2,
-          "Progression": 1, "Security": 2, "Creation": 1, "Shooting": 0.5},
-    "M": {"Passing": 3, "Creation": 4, "Ball-winning": 3, "Progression": 3,
-          "Duels": 2, "Security": 2, "Shooting": 2, "Defending": 1},
-    "F": {"Shooting": 5, "Creation": 3, "Progression": 2, "Duels": 1,
-          "Passing": 1, "Security": 1, "Ball-winning": 0.5},
+    # A defender is rated on DEFENDING: stopping the ball (clearances, blocks),
+    # winning it back, and winning his duels. Security stays, small, because
+    # an error leading to a shot and a needless foul are defensive failures,
+    # not on-ball ones. Passing, progression, creation and shooting are gone:
+    # they are real skills, but they belong to the midfield job, and including
+    # them meant a centre-back at a 60%-possession side out-rated one at a
+    # 30%-possession side on the strength of touches he was simply given.
+    "D": {"Defending": 5, "Duels": 4, "Ball-winning": 3, "Security": 1},
+    # A midfielder's job is control and creation: keep it, move it forward,
+    # make chances, win it back.
+    "M": {"Passing": 4, "Creation": 4, "Progression": 3, "Ball-winning": 3,
+          "Duels": 2, "Security": 2},
+    # A forward's job is to score, and to create for the players around him.
+    "F": {"Shooting": 5, "Creation": 3, "Progression": 1, "Security": 0.5},
 }
 
 # How much of a concept carries from one season to the next, measured on 167
