@@ -322,7 +322,7 @@ def _attach_derived(players: list[dict], season: str) -> None:
         d = derived.get(p.get("id"))
         p["_derivedRole"] = p["_roleMix"] = None
         p["_hybrid"] = False
-        p["_aliasRoles"] = []
+        p["_aliasRoles"] = {}
         if not d or d["starts"] < MIN_STARTS_FOR_ROLE:
             continue
         merged = {}
@@ -333,9 +333,11 @@ def _attach_derived(players: list[dict], season: str) -> None:
         # one to be worth saying so. A full-back who spent a third of his
         # season as a wing-back is rated among full-backs because that is the
         # only pool big enough, but the fact should not vanish with the label.
-        p["_aliasRoles"] = sorted(
-            r for r, n in d["mix"].items()
-            if r in ROLE_ALIASES and n / total >= MIN_BLEND_SHARE)
+        # Kept with its share, because degree matters here: Tyrick Mitchell has
+        # started 97% of three seasons at wing-back and none of it at full-back,
+        # so "FB (WB)" would read as an aside when it is the whole story.
+        p["_aliasRoles"] = {r: round(n / total, 2) for r, n in d["mix"].items()
+                            if r in ROLE_ALIASES and n / total >= MIN_BLEND_SHARE}
         mix = {r: n / total for r, n in merged.items()
                if n / total >= MIN_BLEND_SHARE}
         if not mix:

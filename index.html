@@ -3420,10 +3420,12 @@ function _hybridTag(p) {
   }
   // A role that was folded into this one because its own pool is too small to
   // rank against — worth showing, since it is a real part of what he plays.
-  if (p.aliasRoles && p.aliasRoles.length) {
-    out += `<span class="pr-hybrid pr-alias" title="Plays a significant share at ${
-      p.aliasRoles.join(', ')}, rated among ${p.pos} because that pool is large enough to rank against"
-      >${p.pos} (${p.aliasRoles.join(', ')})</span>`;
+  const alias = p.aliasRoles && Object.entries(p.aliasRoles);
+  if (alias && alias.length) {
+    const txt = alias.sort((a, b) => b[1] - a[1])
+      .map(([r, w]) => `${r} ${Math.round(w * 100)}%`).join(', ');
+    out += `<span class="pr-hybrid pr-alias" title="Started ${txt} of his matches there. Rated among ${
+      p.pos} only because that pool is large enough to rank against.">${p.pos} (${txt})</span>`;
   }
   return out;
 }
