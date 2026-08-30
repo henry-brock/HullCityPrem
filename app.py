@@ -368,6 +368,26 @@ def hull_analysis(league):
         return jsonify({"players": [], "error": str(exc)}), 500
 
 
+@app.route("/api/formations")
+def formations():
+    """Starting shapes each team has used, and what they have faced."""
+    season = request.args.get("season", "2627")
+    try:
+        from lineups import formations as build
+        teams = build(season)
+        league = defaultdict(int)
+        for r in teams.values():
+            for shape, n in r["shapes"].items():
+                league[shape] += n
+        return jsonify({
+            "season": season,
+            "teams":  teams,
+            "league": dict(sorted(league.items(), key=lambda kv: -kv[1])),
+        })
+    except Exception as exc:
+        return jsonify({"teams": {}, "error": str(exc)}), 500
+
+
 @app.route("/api/styles")
 def team_styles():
     """Playing-style fingerprint per 2026/27 team from cached ESPN stats."""

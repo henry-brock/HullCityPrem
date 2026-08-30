@@ -162,6 +162,69 @@ def derive(season: str = "2627") -> dict:
     return out
 
 
+def _team_map(season: str) -> dict:
+    """{pulseTeamId: internal id}, cached — the fixtures walk is not free."""
+    path = CACHE / f"team_ids_{season}.json"
+    if path.exists():
+        try:
+            return {int(k): v for k, v in json.loads(path.read_text()).items()}
+        except (json.JSONDecodeError, ValueError):
+            pass
+    from pl_players import _teams
+    from pulse_results import _find_season_id, _season_year
+    out = _teams(_find_season_id(_season_year(season)))
+    path.write_text(json.dumps({str(k): v for k, v in out.items()}))
+    return out
+
+
+def formations(season: str = "2627") -> dict:
+    """
+    Per-team shape usage: what each side lined up in, and what it faced.
+
+    The shapes a team picks are a blunter statement of intent than any derived
+    metric — Hull have started both matches in a 5-4-1, which is the same fact
+    the possession and PPDA numbers report at one remove.
+    """
+    try:
+        data = json.loads(_cache_path(season).read_text()).get("fixtures", {})
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+    names = _team_map(season)
+
+    teams = {}
+    for sides in data.values():
+        for i, side in enumerate(sides):
+            tid = names.get(side.get("teamId"))
+            if not tid:
+                continue
+            rec = teams.setdefault(tid, {"used": Counter(), "faced": Counter(),
+                                         "back": [], "front": [], "matches": 0})
+            rec["used"][side["formation"]] += 1
+            rec["matches"] += 1
+            rows = side["rows"]
+            if len(rows) > 2:
+                rec["back"].append(len(rows[1]))
+                rec["front"].append(len(rows[-1]))
+            for j, other in enumerate(sides):
+                if j != i:
+                    rec["faced"][other["formation"]] += 1
+
+    out = {}
+    for tid, r in teams.items():
+        common, n = r["used"].most_common(1)[0]
+        out[tid] = {
+            "matches":  r["matches"],
+            "shapes":   dict(r["used"].most_common()),
+            "faced":    dict(r["faced"].most_common()),
+            "common":   common,
+            "commonN":  n,
+            "variety":  len(r["used"]),
+            "avgBack":  round(sum(r["back"]) / len(r["back"]), 2) if r["back"] else None,
+            "avgFront": round(sum(r["front"]) / len(r["front"]), 2) if r["front"] else None,
+        }
+    return out
+
+
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser(description="Build the per-match lineup cache")

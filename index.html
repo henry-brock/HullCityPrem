@@ -1250,6 +1250,11 @@
       color: var(--text-secondary); padding-top: 10px; text-align: left;
     }
     .pr-rank { font-variant-numeric: tabular-nums; }
+    .fm-chip {
+      display: inline-block; margin: 1px 3px 1px 0; padding: 1px 6px;
+      border-radius: 3px; font-size: 0.66rem; font-variant-numeric: tabular-nums;
+      background: rgba(255,255,255,0.06); color: var(--text-secondary);
+    }
     .pr-hybrid {
       display: inline-block; margin-left: 6px; padding: 1px 5px; border-radius: 3px;
       font-size: 0.55rem; font-weight: 700; letter-spacing: 0.04em;
@@ -1958,6 +1963,18 @@
       </div>
     </div>
   </section>
+
+  <!-- ═══ FORMATIONS ═══ -->
+  <section id="tab-formations" class="section">
+    <div class="card">
+      <div class="card-header" style="background:linear-gradient(90deg,#0a001a,#1a003a)">
+        <span class="card-title" style="color:#F5A12D">Formations — what each side lines up in</span>
+        <span id="fm-meta" style="font-size:0.72rem;color:var(--text-secondary)"></span>
+      </div>
+      <div id="fm-body"><div class="sa-empty">Loading formations…</div></div>
+    </div>
+  </section>
+
 
   <!-- ═══ HULL SURVIVAL ═══ -->
   <!-- ═══ RIVAL TRACKER ═══ -->
@@ -2853,6 +2870,7 @@ const TAB_GROUPS = {
               ['leaders',       'League Leaders'],
               ['champanalysis', 'Championship 25/26']],
   analytics: [['styles',        'Styles'],
+              ['formations',    'Formations'],
               ['teamstats',     'Team Stats'],
               ['derived',       'Derived Stats']],
 };
@@ -2869,6 +2887,7 @@ const TAB_INIT = {
   planalysis:    () => { initAnalysisTab('pl'); loadPlayerRater(); },
   leaders:       () => loadLeaders(),
   styles:        () => initStylesTab(),
+  formations:    () => loadFormations(),
   survival:      () => initSurvivalTab(),
   home:          () => renderDashboard(),
   xgtable:       () => renderXGTable(),
@@ -3547,6 +3566,98 @@ function renderPlayerRater() {
       </div>
     </div>`;
 }
+
+// ═══════════════════════════════════════════════════
+// FORMATIONS — the shape a team picks, which is a blunt statement of intent
+// ═══════════════════════════════════════════════════
+// A shape says plainly what the derived metrics say at one remove: Hull have
+// started both matches with a back five and one forward, which is the same
+// fact as 29% possession and a PPDA of 20 arriving by a different route.
+// Sorted by defenders because that is the axis that separates the league.
+let _fmData = null;
+
+async function loadFormations(force) {
+  const body = document.getElementById('fm-body');
+  if (_fmData && !force) { renderFormations(); return; }
+  body.innerHTML = `<div class="sa-empty">Loading formations…</div>`;
+  try {
+    _fmData = await (await fetch('/api/formations?season=2627')).json();
+  } catch (e) {
+    body.innerHTML = `<div class="sa-empty">Could not load formations.</div>`;
+    return;
+  }
+  renderFormations();
+}
+
+function renderFormations() {
+  const body = document.getElementById('fm-body');
+  const meta = document.getElementById('fm-meta');
+  if (!body || !_fmData) return;
+  const teams = _fmData.teams || {};
+  const ids = Object.keys(teams);
+  if (_fmData.error || !ids.length) {
+    meta.textContent = '';
+    body.innerHTML = `<div class="sa-empty">${_fmData.error
+      ? 'Failed: ' + _fmData.error
+      : 'No lineup data yet — shapes appear once matches are played.'}</div>`;
+    return;
+  }
+
+  const league = _fmData.league || {};
+  const total  = Object.values(league).reduce((a, b) => a + b, 0);
+  meta.textContent = `${total} team-matches · ${Object.keys(league).length} distinct shapes`;
+  const nameOf = id => (TEAMS.find(t => t.id === id) || {}).name || id;
+
+  const rows = ids.map(id => ({ id, ...teams[id] }))
+                  .sort((a, b) => (b.avgBack - a.avgBack) || (a.avgFront - b.avgFront));
+
+  // Flask serialises dicts with sorted keys, so commonest-first has to be
+  // re-established here rather than trusted from the payload.
+  const byCount = o => Object.entries(o || {}).sort((a, b) => b[1] - a[1]);
+  const chips = o => byCount(o)
+    .map(([shape, n]) => `<span class="fm-chip">${shape}${n > 1 ? ` ×${n}` : ''}</span>`)
+    .join(' ');
+
+  body.innerHTML = `
+    <div style="padding:0 16px 18px">
+      <div class="pr-note">
+        The starting shape, taken from the formation Opta records for each lineup —
+        not a label anyone typed. <strong>Back</strong> and <strong>Front</strong> are the
+        average size of the defensive and forward lines, so a 5-4-1 reads 5 and 1.
+        <strong>Faced</strong> is what opponents set up in against them.
+        Substitutions are not included: the feed gives a starting formation only, and
+        never reports the shape a side changes to.
+      </div>
+      <div style="overflow-x:auto;margin-top:12px">
+      <table class="pr-tbl">
+        <thead><tr>
+          <th style="text-align:left">Team</th><th>Pld</th>
+          <th title="Average number of defenders in the starting line">Back</th>
+          <th title="Average number of forwards in the starting line">Front</th>
+          <th style="text-align:left">Shapes used</th>
+          <th style="text-align:left">Shapes faced</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map(r => `
+            <tr style="${r.id === 'hull' ? 'background:rgba(245,161,45,0.10)' : ''}">
+              <td style="text-align:left">
+                <span class="lb-crest" style="${_crest(r.id)}"></span>${nameOf(r.id)}
+              </td>
+              <td class="pr-dim">${r.matches}</td>
+              <td><span class="pr-score">${r.avgBack ?? '–'}</span></td>
+              <td class="pr-dim">${r.avgFront ?? '–'}</td>
+              <td style="text-align:left">${chips(r.shapes)}</td>
+              <td style="text-align:left">${chips(r.faced)}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table></div>
+      <div class="pr-note" style="margin-top:14px">
+        League-wide: ${byCount(league)
+          .map(([s, n]) => `<strong>${s}</strong> ${n}`).join(' · ')}
+      </div>
+    </div>`;
+}
+
 
 // ═══════════════════════════════════════════════════
 // LEAGUE LEADERS — the top ten at each position
