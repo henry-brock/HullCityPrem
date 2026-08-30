@@ -264,9 +264,13 @@ def _role_index(players: list[dict], floor: float) -> None:
 # loosens naturally.
 MIN_STARTS_FOR_ROLE = 2
 MIN_ROLE_SHARE      = 0.6
-# A role has to account for a fifth of a player's starts before it is blended
-# in — otherwise one emergency afternoon at left-back colours a whole season.
-MIN_BLEND_SHARE     = 0.2
+# A role has to account for this share of a player's starts before it is
+# blended in — otherwise one emergency afternoon at left-back colours a whole
+# season. 15% is about four or five starts across a full one. Nothing caps the
+# number of roles: at this threshold 23 players in 25/26 are rated across three
+# or four. A fifth was too strict, discarding 11% of a hybrid's starts against
+# 7% here, and finding only half as many genuine three-role players.
+MIN_BLEND_SHARE     = 0.15
 
 _DERIVED_CACHE: dict = {}
 
