@@ -2727,11 +2727,16 @@ let _liveTimer = null;
 const LIVE_POLL_MS = 60000;
 
 async function loadLive() {
+  // A failed poll is not the same as "nothing is being played". The fixtures
+  // endpoint drops a request now and then, and clearing on error made the
+  // strip blink out mid-match and come back seconds later. Only an explicit,
+  // successful empty list retires a match from the display.
   try {
     const r = await fetch('/api/live');
-    _liveData = (await r.json()).live || [];
+    const d = await r.json();
+    if (r.ok && !d.error) _liveData = d.live || [];
   } catch (e) {
-    _liveData = [];
+    /* keep the last known state */
   }
   renderLiveStrip();
   if (_liveInclude) renderTable();
