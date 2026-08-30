@@ -322,12 +322,20 @@ def _attach_derived(players: list[dict], season: str) -> None:
         d = derived.get(p.get("id"))
         p["_derivedRole"] = p["_roleMix"] = None
         p["_hybrid"] = False
+        p["_aliasRoles"] = []
         if not d or d["starts"] < MIN_STARTS_FOR_ROLE:
             continue
         merged = {}
         for r, n in d["mix"].items():
             merged[ROLE_ALIASES.get(r, r)] = merged.get(ROLE_ALIASES.get(r, r), 0) + n
         total = sum(merged.values())
+        # Which aliased roles were folded away, for players who did enough of
+        # one to be worth saying so. A full-back who spent a third of his
+        # season as a wing-back is rated among full-backs because that is the
+        # only pool big enough, but the fact should not vanish with the label.
+        p["_aliasRoles"] = sorted(
+            r for r, n in d["mix"].items()
+            if r in ROLE_ALIASES and n / total >= MIN_BLEND_SHARE)
         mix = {r: n / total for r, n in merged.items()
                if n / total >= MIN_BLEND_SHARE}
         if not mix:
@@ -640,6 +648,9 @@ def _rate_pool(players: list[dict], season: str = "2627",
                 # whichever player happens to top it.
                 "roleLabel": RATING_LABEL[pos],
                 "hybrid":    hybrid,
+                # Roles merged into this one for pool-size reasons, e.g. a
+                # full-back who plays a good share of his football at wing-back.
+                "aliasRoles": p.get("_aliasRoles") or None,
                 "roleMix":   {r: round(w / total, 2) for r, w in mix.items()} if hybrid else None,
                 "concepts":  scores,
                 "peers":     len(groups[pos]["peers"]),

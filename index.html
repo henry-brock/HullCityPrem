@@ -1260,6 +1260,7 @@
       font-size: 0.55rem; font-weight: 700; letter-spacing: 0.04em;
       background: rgba(245,161,45,0.16); color: #F5A12D; vertical-align: 1px;
     }
+    .pr-alias { background: rgba(255,255,255,0.07); color: var(--text-secondary); }
     .pr-rank small { color: var(--text-secondary); font-size: 0.85em; }
     .pr-conf { font-size: 0.6rem; color: var(--text-secondary); margin-left: 3px; }
     .pr-score {
@@ -3409,11 +3410,22 @@ function _score(v) {
 // them and the results blended by how often they played there — so the badge
 // is not a caveat, it is what the number actually is.
 function _hybridTag(p) {
-  if (!p || !p.hybrid || !p.roleMix) return '';
-  const parts = Object.entries(p.roleMix).sort((a, b) => b[1] - a[1]);
-  const title = parts.map(([r, w]) => `${r} ${Math.round(w * 100)}% of starts`).join(', ');
-  return `<span class="pr-hybrid" title="Rated across ${title}">HYBRID (${
-    parts.map(([r]) => r).join(', ')})</span>`;
+  if (!p) return '';
+  let out = '';
+  if (p.hybrid && p.roleMix) {
+    const parts = Object.entries(p.roleMix).sort((a, b) => b[1] - a[1]);
+    const title = parts.map(([r, w]) => `${r} ${Math.round(w * 100)}% of starts`).join(', ');
+    out += `<span class="pr-hybrid" title="Rated across ${title}">HYBRID (${
+      parts.map(([r]) => r).join(', ')})</span>`;
+  }
+  // A role that was folded into this one because its own pool is too small to
+  // rank against — worth showing, since it is a real part of what he plays.
+  if (p.aliasRoles && p.aliasRoles.length) {
+    out += `<span class="pr-hybrid pr-alias" title="Plays a significant share at ${
+      p.aliasRoles.join(', ')}, rated among ${p.pos} because that pool is large enough to rank against"
+      >${p.pos} (${p.aliasRoles.join(', ')})</span>`;
+  }
+  return out;
 }
 const PR_POS_NAME  = { G: 'Goalkeepers', CB: 'Centre-backs', FB: 'Full-backs',
                        DM: 'Defensive midfielders', CM: 'Central midfielders',
