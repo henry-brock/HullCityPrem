@@ -1252,6 +1252,10 @@
     .pr-rank { font-variant-numeric: tabular-nums; }
     .pr-rank small { color: var(--text-secondary); font-size: 0.85em; }
     .pr-conf { font-size: 0.6rem; color: var(--text-secondary); margin-left: 3px; }
+    .pr-score {
+      font-weight: 800; font-size: 0.86rem; font-variant-numeric: tabular-nums;
+      color: #e8e8e8;
+    }
     .pr-pill {
       display: inline-block; min-width: 26px; padding: 2px 5px; border-radius: 4px;
       color: #fff; font-weight: 700; font-size: 0.68rem;
@@ -3366,6 +3370,16 @@ function renderMatchweekPage(mw) {
 // ═══════════════════════════════════════════════════
 let _prData = null;
 const PR_POS_ORDER = ['G', 'D', 'M', 'F'];
+
+// Ratings are percentiles, so they are already on a 0-100 scale — but shown to
+// one decimal alongside a bare confidence percentage they read as two rival
+// percentages rather than one score. Whole numbers on a stated 1-100 scale,
+// with confidence given its own labelled column, say the same thing plainly.
+// Clamped to 1 because a "0 out of 100" reads as missing data rather than last.
+function _score(v) {
+  if (v == null || isNaN(v)) return '–';
+  return Math.min(100, Math.max(1, Math.round(v)));
+}
 const PR_POS_NAME  = { G: 'Goalkeepers', D: 'Defenders', M: 'Midfielders', F: 'Forwards' };
 
 async function loadPlayerRater(force) {
@@ -3463,7 +3477,11 @@ function renderPlayerRater() {
         <div style="overflow-x:auto">
         <table class="pr-tbl">
           <thead><tr>
-            <th style="text-align:left">Player</th><th>Mins</th><th>Form</th><th>Rating</th><th title="Rank among qualified Premier League players in this position, and the percentile against every peer with minutes">In league</th>
+            <th style="text-align:left">Player</th><th>Mins</th>
+            <th title="What the player has actually done, scored 1-100 against positional peers">Form</th>
+            <th title="Form pulled toward 50 by how little has been seen of them">Score</th>
+            <th title="How much of a full season's evidence this is based on">Conf</th>
+            <th title="Rank among qualified Premier League players in this position, and the percentile against every peer with minutes">In league</th>
             ${cols.map(c => `<th title="${negSet.has(c) ? c + ' — fewer is better, already inverted' : c}">${c}${negSet.has(c) ? ' ↓' : ''}</th>`).join('')}
           </tr></thead>
           <tbody>
@@ -3473,11 +3491,9 @@ function renderPlayerRater() {
                   <span class="pr-shirt">${p.shirt ?? '–'}</span>${p.name}
                 </td>
                 <td class="pr-dim">${p.minutes}</td>
-                <td><strong style="color:${_prColor(p.ratingRaw)}">${p.ratingRaw.toFixed(0)}</strong></td>
-                <td>
-                  <span style="font-weight:800">${p.rating.toFixed(1)}</span>
-                  <span class="pr-conf" title="Confidence from minutes played — the rating is pulled toward 50 until there is enough evidence">${p.confidence}%</span>
-                </td>
+                <td><strong style="color:${_prColor(p.ratingRaw)}">${_score(p.ratingRaw)}</strong></td>
+                <td><span class="pr-score">${_score(p.rating)}</span></td>
+                <td class="pr-dim">${p.confidence}%</td>
                 <td class="pr-rank">${p.leagueRank
                   ? `<strong>${p.leagueRank}</strong><small>/${p.leagueOf}</small>`
                   : `<span class="pr-dim" title="Below the minutes needed to be ranked">–</span>`}
@@ -3496,10 +3512,12 @@ function renderPlayerRater() {
   body.innerHTML = `
     <div style="padding:0 16px 18px">
       <div class="pr-note">
-        Every number is a <strong>percentile against Premier League players in the same position</strong> —
-        50 is league average, not a mark out of 100. <strong>Form</strong> is the weighted composite of what
-        this player has actually done; <strong>Rating</strong> pulls that toward average by how little has been
-        seen of them (the % is that confidence), so one good half-hour cannot mint a star.
+        Every number is scored <strong>1-100 against Premier League players in the same position</strong>,
+        where <strong>50 is league average</strong> — it is a ranking against peers, not a mark out of 100.
+        <strong>Form</strong> is the weighted composite of what this player has actually done;
+        <strong>Score</strong> pulls that toward 50 by how little has been seen of them, so one good
+        half-hour cannot mint a star. <strong>Conf</strong> is how much of a full season's evidence
+        that rests on — at 29% confidence, every score is still close to average, and should be.
         Counting stats are per-90 and divided by team context, so Hull's defenders are not
         credited simply for Hull defending a lot.
       </div>
@@ -3565,11 +3583,9 @@ function renderLeaders() {
         </td>
         <td class="pr-dim" style="text-align:left">${nameOf(r.team)}</td>
         <td class="pr-dim">${r.minutes}</td>
-        <td><strong style="color:${_prColor(r.ratingRaw)}">${r.ratingRaw.toFixed(0)}</strong></td>
-        <td>
-          <span style="font-weight:800">${r.rating.toFixed(1)}</span>
-          <span class="pr-conf" title="Confidence from minutes played">${r.confidence}%</span>
-        </td>
+        <td><strong style="color:${_prColor(r.ratingRaw)}">${_score(r.ratingRaw)}</strong></td>
+        <td><span class="pr-score">${_score(r.rating)}</span></td>
+        <td class="pr-dim">${r.confidence}%</td>
       </tr>`;
 
     return `
@@ -3580,7 +3596,10 @@ function renderLeaders() {
         <table class="pr-tbl">
           <thead><tr>
             <th style="width:34px">#</th><th style="text-align:left">Player</th>
-            <th style="text-align:left">Club</th><th>Mins</th><th>Form</th><th>Rating</th>
+            <th style="text-align:left">Club</th><th>Mins</th>
+            <th title="What the player has actually done, scored 1-100 against positional peers">Form</th>
+            <th title="Form pulled toward 50 by how little has been seen — this is what the table is ranked on">Score</th>
+            <th title="How much of a full season's evidence this is based on">Conf</th>
           </tr></thead>
           <tbody>
             ${rows.map(r => line(r, false)).join('')}
@@ -3595,7 +3614,7 @@ function renderLeaders() {
       <div class="pr-note">
         The same percentile ratings as the squad page, over every player in the league.
         <strong>Form</strong> is what a player has actually done; <strong>Rating</strong> pulls that
-        toward average by how little has been seen of them, and the table is ordered by Rating —
+        toward 50 by how little has been seen of them, and the table is ordered by Score —
         so early in a season this reads as "best, given the evidence" rather than "best".
         A player qualifies at <strong>${share}% of the minutes of the league's most-used player</strong>,
         which keeps one bright cameo out of the top ten.
