@@ -1250,6 +1250,11 @@
       color: var(--text-secondary); padding-top: 10px; text-align: left;
     }
     .pr-rank { font-variant-numeric: tabular-nums; }
+    .pr-hybrid {
+      display: inline-block; margin-left: 6px; padding: 1px 5px; border-radius: 3px;
+      font-size: 0.55rem; font-weight: 700; letter-spacing: 0.04em;
+      background: rgba(245,161,45,0.16); color: #F5A12D; vertical-align: 1px;
+    }
     .pr-rank small { color: var(--text-secondary); font-size: 0.85em; }
     .pr-conf { font-size: 0.6rem; color: var(--text-secondary); margin-left: 3px; }
     .pr-score {
@@ -3369,7 +3374,7 @@ function renderMatchweekPage(mw) {
 // PLAYER RATER — Hull players vs league positional peers
 // ═══════════════════════════════════════════════════
 let _prData = null;
-const PR_POS_ORDER = ['G', 'CB', 'FB', 'DM', 'CM', 'W', 'ST'];
+const PR_POS_ORDER = ['G', 'CB', 'FB', 'DM', 'CM', 'AM', 'W', 'ST'];
 
 // Ratings are percentiles, so they are already on a 0-100 scale — but shown to
 // one decimal alongside a bare confidence percentage they read as two rival
@@ -3380,9 +3385,20 @@ function _score(v) {
   if (v == null || isNaN(v)) return '–';
   return Math.min(100, Math.max(1, Math.round(v)));
 }
+
+// Players who genuinely split a season across positions are rated in each of
+// them and the results blended by how often they played there — so the badge
+// is not a caveat, it is what the number actually is.
+function _hybridTag(p) {
+  if (!p || !p.hybrid || !p.roleMix) return '';
+  const parts = Object.entries(p.roleMix).sort((a, b) => b[1] - a[1]);
+  const title = parts.map(([r, w]) => `${r} ${Math.round(w * 100)}% of starts`).join(', ');
+  return `<span class="pr-hybrid" title="Rated across ${title}">HYBRID (${
+    parts.map(([r]) => r).join(', ')})</span>`;
+}
 const PR_POS_NAME  = { G: 'Goalkeepers', CB: 'Centre-backs', FB: 'Full-backs',
                        DM: 'Defensive midfielders', CM: 'Central midfielders',
-                       W: 'Wingers', ST: 'Forwards' };
+                       AM: 'Attacking midfielders', W: 'Wingers', ST: 'Forwards' };
 
 async function loadPlayerRater(force) {
   const body = document.getElementById('pr-body');
@@ -3475,7 +3491,7 @@ function renderPlayerRater() {
     const cols = concepts[pos] || [];
     return `
       <div class="pr-sec">
-        <div class="pr-sec-h">${PR_POS_NAME[pos]} <span>${rows[0].label}</span></div>
+        <div class="pr-sec-h">${PR_POS_NAME[pos]} <span>${rows[0].roleLabel || rows[0].label}</span></div>
         <div style="overflow-x:auto">
         <table class="pr-tbl">
           <thead><tr>
@@ -3490,7 +3506,7 @@ function renderPlayerRater() {
             ${rows.map(p => `
               <tr>
                 <td style="text-align:left">
-                  <span class="pr-shirt">${p.shirt ?? '–'}</span>${p.name}
+                  <span class="pr-shirt">${p.shirt ?? '–'}</span>${p.name}${_hybridTag(p)}
                 </td>
                 <td class="pr-dim">${p.minutes}</td>
                 <td><strong style="color:${_prColor(p.ratingRaw)}">${_score(p.ratingRaw)}</strong></td>
@@ -3581,7 +3597,7 @@ function renderLeaders() {
       <tr style="${r.team === 'hull' ? 'background:rgba(245,161,45,0.10)' : ''}">
         <td class="pr-dim" style="text-align:center">${dim ? '·' : r.leagueRank}</td>
         <td style="text-align:left">
-          <span class="lb-crest" style="${_crest(r.team)}"></span>${r.name}
+          <span class="lb-crest" style="${_crest(r.team)}"></span>${r.name}${_hybridTag(r)}
         </td>
         <td class="pr-dim" style="text-align:left">${nameOf(r.team)}</td>
         <td class="pr-dim">${r.minutes}</td>
@@ -3593,7 +3609,7 @@ function renderLeaders() {
     return `
       <div class="pr-sec">
         <div class="pr-sec-h">${PR_POS_NAME[pos]}
-          <span>${rows[0].label} · ${rows[0].leagueOf} qualified</span></div>
+          <span>${rows[0].roleLabel || rows[0].label} · ${rows[0].leagueOf} qualified</span></div>
         <div style="overflow-x:auto">
         <table class="pr-tbl">
           <thead><tr>

@@ -33,6 +33,7 @@ positional peers", not "is better".
 """
 
 import json
+import sys
 from pathlib import Path
 
 ROOT  = Path(__file__).parent
@@ -134,6 +135,11 @@ BASE_WEIGHTS = {
     # two roles with the same weighting are not two roles.
     "CM": {"Ball-winning": 4, "Duels": 3.5, "Defending": 3, "Passing": 3,
            "Progression": 2, "Creation": 2, "Security": 2},
+    # A No. 10 — the central player in an advanced midfield band. Creates
+    # first, scores second, and is asked for less defensive work than the
+    # players behind him.
+    "AM": {"Creation": 4, "Passing": 3, "Progression": 3, "Shooting": 2,
+           "Security": 2, "Duels": 1.5, "Ball-winning": 1.5},
     # A winger creates and scores, and is judged much less on winning the ball
     # back than a central midfielder is.
     "W":  {"Creation": 4, "Shooting": 3, "Progression": 3, "Passing": 1,
@@ -175,13 +181,13 @@ WEIGHTS = {
 }
 
 RATING_LABEL = {"G": "Goalkeeping", "CB": "Defending", "FB": "Full-back play",
-                "DM": "Screening", "CM": "Control", "W": "Wing play",
-                "ST": "Goal threat"}
+                "DM": "Screening", "CM": "Control", "AM": "Creating",
+                "W": "Wing play", "ST": "Goal threat"}
 
 # The rating groups. Pulse reports a coarse position (G/D/M/F) and a detailed
 # role ("Left Full Back", "Centre Central Defender"); the detailed one is what
 # separates the two defensive jobs.
-ROLES = ("G", "CB", "FB", "DM", "CM", "W", "ST")
+ROLES = ("G", "CB", "FB", "DM", "CM", "AM", "W", "ST")
 
 # Full-backs cross; centre-backs do not. Used only for the handful of players
 # Pulse files as a bare "Defender" — the league medians are 2.5 crosses per 90
@@ -244,6 +250,71 @@ def _role_index(players: list[dict], floor: float) -> None:
         p["_roleIndex"] = d - a
 
 
+# Before where a player LINED UP overrides how he is filed, it has to be where
+# he USUALLY lines up. The threshold is not there to catch bad data: Marc Guéhi
+# really did play a midfield role in one odd game, and the feed recorded it
+# correctly. It is there because one unusual afternoon should not decide which
+# peer group rates his whole season — on two starts a 1-1 split is a coin flip,
+# and it put a centre-back top of the defensive-midfield table.
+#
+# Requiring two starts and a clear majority keeps the genuine cases, where a
+# player is being used somewhere his label does not say: Foden started twice on
+# the left of a 4-2-3-1's three, Gakpo twice wide while filed as a striker.
+# The share resolves itself as a season fills out, so this is strictest now and
+# loosens naturally.
+MIN_STARTS_FOR_ROLE = 2
+MIN_ROLE_SHARE      = 0.6
+# A role has to account for a fifth of a player's starts before it is blended
+# in — otherwise one emergency afternoon at left-back colours a whole season.
+MIN_BLEND_SHARE     = 0.2
+
+_DERIVED_CACHE: dict = {}
+
+
+def _derived_roles(season: str) -> dict:
+    """player id -> role, from the starting formations he appeared in."""
+    if season not in _DERIVED_CACHE:
+        try:
+            from lineups import derive
+            _DERIVED_CACHE[season] = derive(season)
+        except Exception as exc:                       # no lineup cache yet
+            print(f"[player_rater] derived roles unavailable: {exc}", file=sys.stderr)
+            _DERIVED_CACHE[season] = {}
+    return _DERIVED_CACHE[season]
+
+
+def _attach_derived(players: list[dict], season: str) -> None:
+    """
+    Attach the role a player is rated in, and — for genuine utility players —
+    the mix he is rated ACROSS.
+
+    Forcing one role on a man who played four is the flaw the whole exercise
+    was meant to fix. Over a full season 47% of regular starters play a single
+    role and 84% have a clear majority, but the rest are properly positionless:
+    one 25/26 regular started 36 games as FB 8, AM 14, W 6, DM 6, CM 1, ST 1.
+    Picking his commonest role would rate two thirds of his football in the
+    wrong company, and falling back to the label just swaps one single answer
+    for another. Those players are scored against every role they actually
+    played and the results blended by how often they played it — which matches
+    the fact that their STATS are already a blend.
+    """
+    derived = _derived_roles(season)
+    for p in players:
+        d = derived.get(p.get("id"))
+        p["_derivedRole"] = p["_roleMix"] = None
+        p["_hybrid"] = False
+        if not d or d["starts"] < MIN_STARTS_FOR_ROLE:
+            continue
+        total = sum(d["mix"].values())
+        mix = {r: n / total for r, n in d["mix"].items()
+               if n / total >= MIN_BLEND_SHARE}
+        if not mix:
+            continue
+        p["_derivedRole"] = d["role"]
+        p["_hybrid"] = d["share"] < MIN_ROLE_SHARE and len(mix) > 1
+        p["_roleMix"] = mix if p["_hybrid"] else None
+
+
 def _role(player: dict) -> str:
     """
     Which peer group a player is rated against.
@@ -254,6 +325,14 @@ def _role(player: dict) -> str:
     against Haaland or against a holding midfielder depending on which way
     the feed happened to file him.
     """
+    # Where he actually started, when we know it. A season label describes one
+    # position; the stats being rated were accumulated across every position he
+    # was picked in, which is why Foden — filed "Centre/Right Attacking
+    # Midfielder", started twice on the left of a 4-2-3-1's three — was being
+    # rated against central midfielders on a winger's numbers.
+    if player.get("_derivedRole"):
+        return player["_derivedRole"]
+
     pos  = player.get("pos") or ""
     if pos == "G":
         return "G"
@@ -441,56 +520,87 @@ def _rate_pool(players: list[dict], season: str = "2627",
     all_mins = [(p.get("stats", {}).get("minutes") or 0) for p in players]
     floor    = max(all_mins or [0]) * MIN_MINUTES_SHARE
     _role_index(players, floor)
+    _attach_derived(players, season)
 
-    by_pos = {}
+    # Per-90, context-adjusted value of one stat for one player. Pulled out so
+    # a player can be scored against a group he is not a member of, which is
+    # what blending a hybrid requires.
+    def adjusted(p, key, cdef):
+        v = _per90(p.get("stats", {}), key)
+        if v is not None and key not in RATE_STATS:
+            scale = (ctx.get(p.get("team"), {}) or {}).get(cdef["ctx"], 1.0)
+            v = v / scale if scale else v
+        return v
+
+    # Peer groups, keyed on each player's PRIMARY role. A hybrid belongs to the
+    # pool of the role he played most, so the pools stay clean, but he is
+    # scored against several.
+    groups = {}
     for pos in ROLES:
         concepts = CONCEPTS_GK if pos == "G" else CONCEPTS_OUT
-        weights  = WEIGHTS[pos]
-
         peers = [p for p in players
                  if _role(p) == pos and (p.get("stats", {}).get("minutes") or 0) > 0]
         if not peers:
             continue
-
-        # Per-90, context-adjusted values for every peer, per stat.
-        vals = {}
-        for cname, cdef in concepts.items():
+        cols = {}
+        for cdef in concepts.values():
             for key in cdef["stats"]:
-                col = []
-                for p in peers:
-                    v = _per90(p.get("stats", {}), key)
-                    if v is not None and key not in RATE_STATS:
-                        scale = (ctx.get(p.get("team"), {}) or {}).get(cdef["ctx"], 1.0)
-                        v = v / scale if scale else v
-                    col.append(v)
-                vals[key] = col
+                cols[key] = [adjusted(p, key, cdef) for p in peers]
+        groups[pos] = {"peers": peers, "cols": cols, "concepts": concepts}
 
+    def score_against(p, pos):
+        """Concept percentiles and a weighted rating for `p` in role `pos`."""
+        g, weights = groups[pos], WEIGHTS[pos]
+        scores, wsum, wtot = {}, 0.0, 0.0
+        for cname, cdef in g["concepts"].items():
+            pcts = []
+            for key in cdef["stats"]:
+                pct = _percentile(adjusted(p, key, cdef), g["cols"][key])
+                if cdef.get("neg"):
+                    pct = 100 - pct
+                pcts.append(pct)
+            if not pcts:
+                continue
+            raw = sum(pcts) / len(pcts)
+            scores[cname] = raw
+            w = weights.get(cname, 0)
+            if w:
+                wsum += raw * w
+                wtot += w
+        return scores, (wsum / wtot if wtot else None)
+
+    by_pos = {}
+    for pos in groups:
         rows = []
-        for i, p in enumerate(peers):
+        for p in groups[pos]["peers"]:
             mins   = p.get("stats", {}).get("minutes") or 0
             shrink = mins / (mins + SHRINK_K)
 
+            # Which roles to score him in, and how heavily.
+            mix = {r: w for r, w in (p.get("_roleMix") or {}).items() if r in groups}
+            # Goalkeeping has its own concepts entirely, so it never blends.
+            if pos == "G" or "G" in mix:
+                mix = {}
+            if not mix:
+                mix = {pos: 1.0}
+            total = sum(mix.values())
+
+            parts = {r: score_against(p, r) for r in mix}
+            names = set().union(*[set(sc) for sc, _ in parts.values()])
             # Concepts keep their RAW percentile — they describe what the player
             # has actually done, and flattening them would hide it. The
             # confidence penalty is applied once, to the headline rating.
-            scores, wsum, wtot = {}, 0.0, 0.0
-            for cname, cdef in concepts.items():
-                pcts = []
-                for key in cdef["stats"]:
-                    pct = _percentile(vals[key][i], vals[key])
-                    if cdef.get("neg"):
-                        pct = 100 - pct
-                    pcts.append(pct)
-                if not pcts:
-                    continue
-                raw = sum(pcts) / len(pcts)
-                scores[cname] = round(raw, 1)
-                w = weights.get(cname, 0)
-                if w:
-                    wsum += raw * w
-                    wtot += w
+            scores = {n: round(sum(w * parts[r][0].get(n, 50.0)
+                                   for r, w in mix.items()) / total, 1)
+                      for n in names}
+            got = [(w, parts[r][1]) for r, w in mix.items() if parts[r][1] is not None]
+            raw_rating = (sum(w * v for w, v in got) / sum(w for w, _ in got)
+                          if got else None)
 
-            raw_rating = wsum / wtot if wtot else None
+            hybrid = len(mix) > 1
+            label  = ("HYBRID (" + ", ".join(sorted(mix, key=lambda r: -mix[r])) + ")"
+                      if hybrid else RATING_LABEL[pos])
+
             rows.append({
                 "id":        p.get("id"),
                 "name":      p.get("name"),
@@ -502,9 +612,14 @@ def _rate_pool(players: list[dict], season: str = "2627",
                 # Headline: pulled toward average by how little we have seen.
                 "rating":    round(50 + (raw_rating - 50) * shrink, 1) if raw_rating is not None else None,
                 "ratingRaw": round(raw_rating, 1) if raw_rating is not None else None,
-                "label":     RATING_LABEL[pos],
+                "label":     label,
+                # The group's own name, so a section heading is not taken from
+                # whichever player happens to top it.
+                "roleLabel": RATING_LABEL[pos],
+                "hybrid":    hybrid,
+                "roleMix":   {r: round(w / total, 2) for r, w in mix.items()} if hybrid else None,
                 "concepts":  scores,
-                "peers":     len(peers),
+                "peers":     len(groups[pos]["peers"]),
                 "confidence": round(shrink * 100),
                 "qualified": mins >= floor and raw_rating is not None,
             })
@@ -613,6 +728,7 @@ def player_derived(players: list[dict], target_team: str = "hull") -> dict:
     _augment(players)
     all_mins = [(p.get("stats", {}).get("minutes") or 0) for p in players]
     _role_index(players, max(all_mins or [0]) * MIN_MINUTES_SHARE)
+    _attach_derived(players, "2627")
 
     by_pos = {}
     for p in players:

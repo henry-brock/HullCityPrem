@@ -118,14 +118,29 @@ def fetch(season: str = "2627", force: bool = False) -> dict:
             fetched += 1
             time.sleep(DELAY)
 
+    # One record per player. A man who moved or was loaned mid-season appears
+    # in both clubs' squads, and Pulse returns his SEASON totals against either
+    # id — so he was being counted twice in every peer group, once per club,
+    # with identical stats. Keep the club he played the most for, which is also
+    # the right one for the team-context adjustment.
+    best = {}
+    for p in players:
+        prev = best.get(p["id"])
+        if prev is None or (p["stats"].get("minutes") or 0) > (prev["stats"].get("minutes") or 0):
+            best[p["id"]] = p
+    deduped = list(best.values())
+    if len(deduped) != len(players):
+        print(f"[pl_players] merged {len(players) - len(deduped)} duplicate "
+              f"records (transfers and loans)", file=sys.stderr)
+
     payload = {
         "season":  season,
         "fetched": datetime.now().isoformat(),
         "teams":   len(teams),
-        "players": players,
+        "players": deduped,
     }
     path.write_text(json.dumps(payload, indent=1), encoding="utf-8")
-    print(f"[pl_players] {len(players)} players ({fetched} fetched, {reused} reused) "
+    print(f"[pl_players] {len(deduped)} players ({fetched} fetched, {reused} reused) "
           f"→ {path}", file=sys.stderr)
     return payload
 
