@@ -970,6 +970,15 @@
 
     .fx-team.away { flex-direction: row-reverse; }
 
+    .fx-name-col {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      min-width: 0;
+    }
+
+    .fx-team.away .fx-name-col { align-items: flex-end; }
+
     .fx-name {
       font-size: 0.8rem;
       font-weight: 700;
@@ -978,6 +987,16 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
+
+    .fx-sub {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .fx-team.away .fx-sub { flex-direction: row-reverse; }
+
+    .fx-form { display: flex; gap: 2px; }
 
     .fx-mid {
       flex-shrink: 0;
@@ -3494,7 +3513,10 @@ function renderMatchweekPage(mw) {
       <div class="fx-teams">
         <div class="fx-team">
           <div class="badge" style="background:${ht.col};color:${ht.txt};width:26px;height:26px;font-size:0.55rem;flex-shrink:0;${_crest(ht.id)}"></div>
-          <span class="fx-name">${ht.name}</span>
+          <div class="fx-name-col">
+            <span class="fx-name">${ht.name}</span>
+            ${_fxTeamInfo(ht.id)}
+          </div>
         </div>
         <div class="fx-mid">
           ${result
@@ -3507,7 +3529,10 @@ function renderMatchweekPage(mw) {
         </div>
         <div class="fx-team away">
           <div class="badge" style="background:${at.col};color:${at.txt};width:26px;height:26px;font-size:0.55rem;flex-shrink:0;${_crest(at.id)}"></div>
-          <span class="fx-name">${at.name}</span>
+          <div class="fx-name-col">
+            <span class="fx-name">${at.name}</span>
+            ${_fxTeamInfo(at.id)}
+          </div>
         </div>
       </div>`;
 
@@ -4696,8 +4721,30 @@ function renderTeamStats() {
 }
 
 function initMatchweek() {
+  if (!_stylesData) { fetch('/api/styles').then(r => r.json()).then(d => {
+    _stylesData = d.teams || []; renderMatchweekPage(_currentMW);
+  }).catch(() => {}); }
   renderMatchweekPage(getCurrentMatchweek());
   loadLive();
+}
+
+// Style tag + press tag + last-4 form, the same signals Scout already shows
+// for a single team, compressed onto a fixture card for both sides at once —
+// a style clash (Direct/Low block vs Possession/High press) is exactly the
+// kind of thing worth seeing before kickoff, not just after scouting one team.
+function _fxTeamInfo(teamId) {
+  const style = (_stylesData || []).find(s => s.id === teamId);
+  const table = buildTable(STATE.results);
+  const row   = table.find(r => r.id === teamId);
+  const form  = row ? row.form.slice(-4) : [];
+  const pips  = form.map(r =>
+    `<div class="form-pip fp-${r}" style="width:13px;height:13px;font-size:0.5rem;border-radius:3px">${r}</div>`
+  ).join('');
+  if (!style && !pips) return '';
+  return `<div class="fx-sub">
+    ${style ? `<span class="style-tag style-${style.style}" style="font-size:0.5rem;padding:1px 5px">${style.style}</span>` : ''}
+    ${pips ? `<div class="fx-form">${pips}</div>` : ''}
+  </div>`;
 }
 
 // Live match for a fixture that has not been entered as a result yet. Once a
@@ -4709,9 +4756,13 @@ function _liveFor(homeId, awayId) {
 
 // A compact version of the Scout live panel, framed as home vs away rather
 // than "my team vs opponent" since a fixture card has no team of its own.
-// Trimmed to four stats rather than Scout's eleven — up to ten of these can
-// be on screen in one matchweek, all of them live at kickoff time.
-const MW_LIVE_STATS = ['Possession %', 'Shots', 'On target', 'Big chances'];
+// Trimmed from Scout's eleven stats to these seven — up to ten cards can be
+// on screen in one matchweek, though only 0-3 are ever live at once. Crosses
+// and touches in the box are kept in deliberately: they are the two numbers
+// this project has spent the most time on for exactly this reason — a low
+// block shows up in them live, not just in the final box score.
+const MW_LIVE_STATS = ['Possession %', 'Shots', 'On target', 'Big chances',
+                       'Crosses', 'Touches in box', 'Corners'];
 
 function _liveFixtureBody(m) {
   const h = teamMap[m.homeId], a = teamMap[m.awayId];
