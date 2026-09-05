@@ -3258,9 +3258,19 @@ function renderTable() {
     const prevStat   = form ? undefined : live_ ? settledStat.get(row.id)  : _prevRealStats.get(row.id);
     const prevZone   = form ? undefined : live_ ? (settledStat.get(row.id) || {}).zone : _prevRealZone.get(row.id);
     const posMoved   = prevPos  !== undefined && prevPos  !== pos && !live_;   // live already shows this via settled below
+    // Whether this row is ALSO getting the row-wide flip-up/flip-down wash —
+    // true for either a real position change or a live-driven one (the
+    // settled-vs-pos comparison the arrow itself uses). When it is, the
+    // per-cell orange cell-flash is skipped: a 0.4-alpha orange box sitting
+    // on two cells of an otherwise 0.22-alpha green/red row does not read as
+    // "the row is green", it reads as two mismatched boxes — found by
+    // screenshotting a promoted team's row and seeing exactly that patchwork.
+    // A points/GD change with NO position change (e.g. a draw that leaves a
+    // team exactly where it was) still gets its own cell-flash undisturbed.
+    const rowMoving  = posMoved || (settled && live_ && settled.get(row.id) !== pos);
     const zoneShifted = prevZone !== undefined && prevZone !== zoneClass;
-    const ptsChanged = prevStat !== undefined && prevStat.pts !== row.pts;
-    const gdChanged  = prevStat !== undefined && prevStat.gd  !== gd;
+    const ptsChanged = prevStat !== undefined && prevStat.pts !== row.pts && !rowMoving;
+    const gdChanged  = prevStat !== undefined && prevStat.gd  !== gd && !rowMoving;
 
     const tr = document.createElement('tr');
     tr.className = zoneClass + (liveTeams.has(row.id) ? ' lv-row' : '') + (zoneShifted ? ' zone-alert' : '');
