@@ -3100,8 +3100,18 @@ function _refreshLiveViews() {
   if (active('tab-scoutpick'))                  renderScout(_scoutPicked || _hullNextOpponent(), 'scoutpick');
 }
 
+// Caps how many of the currently-live matches _liveUnplayed hands to the
+// table. Infinity in normal operation; _replayLiveInclude walks it up from 1
+// so turning the toggle on with several matches in progress reveals them one
+// at a time instead of folding all of them into a single reorder — the same
+// problem a multi-match sync had, for the same reason: several games' worth
+// of movement landing in one animation is not readable as "who did what".
+let _liveRevealLimit = Infinity;
+
 function setLiveInclude(on) {
   _liveInclude = on;
+  if (on) { _replayLiveInclude(); return; }
+  _liveRevealLimit = Infinity;
   renderTable();
 }
 
@@ -3111,7 +3121,41 @@ function setLiveInclude(on) {
 function _liveUnplayed() {
   if (!_liveInclude || !_liveData.length) return [];
   const done = new Set(STATE.results.map(r => `${r.homeId}|${r.awayId}`));
-  return _liveData.filter(m => !done.has(`${m.homeId}|${m.awayId}`));
+  return _liveData
+    .filter(m => !done.has(`${m.homeId}|${m.awayId}`))
+    .sort((a, b) => (_fixtureIndex()[a.homeId + ':' + a.awayId] ?? 0)
+                   - (_fixtureIndex()[b.homeId + ':' + b.awayId] ?? 0))
+    .slice(0, _liveRevealLimit);
+}
+
+// Reveal each in-progress match's effect on the table one at a time when the
+// toggle is switched on, in kickoff order — same pacing as _replayTable, and
+// the two share _replayBusy so one cannot start mid-way through the other.
+async function _replayLiveInclude() {
+  const done = new Set(STATE.results.map(r => `${r.homeId}|${r.awayId}`));
+  const all  = _liveData.filter(m => !done.has(`${m.homeId}|${m.awayId}`));
+
+  if (all.length <= 1 || _replayBusy || !_tableTabVisible()) {
+    _liveRevealLimit = Infinity;
+    renderTable();
+    return;
+  }
+
+  _replayBusy = true;
+  let interrupted = false;
+  for (let n = 1; n <= all.length; n++) {
+    _liveRevealLimit = n;
+    renderTable();
+    if (n === all.length) break;
+    await new Promise(res => setTimeout(res, 2300));
+    if (!_tableTabVisible() || !_liveInclude) { interrupted = true; break; }
+  }
+  // Only force a fresh render if the reveal did not finish on its own — the
+  // last iteration already rendered with everyone included otherwise, and a
+  // second identical render would just interrupt its own settling animation.
+  _liveRevealLimit = Infinity;
+  if (interrupted) renderTable();
+  _replayBusy = false;
 }
 
 function renderLiveStrip() {
