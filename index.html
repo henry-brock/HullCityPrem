@@ -6315,6 +6315,53 @@ function closeImport() {
 }
 
 // #1 — one-click live sync of the 2026/27 results from football-data.
+// Every currently-active render that shows the table, so a replay running
+// while a different tab is open does not sit there waiting on animations
+// nobody can see. Mirrors _refreshLiveViews' own "is this on screen" check.
+function _tableTabVisible() {
+  return document.getElementById('tab-table')?.classList.contains('active');
+}
+
+let _replayBusy = false;
+
+// Play newly-synced results onto the League Table one at a time, in kickoff
+// order, so each game's row movement (FLIP, delta arrow, cell flash, zone
+// alert) is watchable on its own instead of several games' worth of
+// reshuffling landing in the same animation and becoming unreadable.
+async function _replayTable(beforeKeys) {
+  const full = STATE.results;
+  const added = full
+    .filter(r => !beforeKeys.has(r.homeId + ':' + r.awayId))
+    .sort((a, b) => (_fixtureIndex()[a.homeId + ':' + a.awayId] ?? 0)
+                   - (_fixtureIndex()[b.homeId + ':' + b.awayId] ?? 0));
+
+  if (!added.length || _replayBusy) { renderTable(); return; }
+
+  // Off-screen, nothing to watch — apply the real end state immediately
+  // rather than blocking on delays nobody will see.
+  if (!_tableTabVisible()) { renderTable(); return; }
+
+  _replayBusy = true;
+  STATE.results = full.filter(r => beforeKeys.has(r.homeId + ':' + r.awayId));
+  renderTable();
+  let interrupted = false;
+  for (const r of added) {
+    // Matches the table's own row-slide/arrow duration (2s) plus a beat to
+    // actually register what moved before the next game lands.
+    await new Promise(res => setTimeout(res, 2300));
+    if (!_tableTabVisible()) { interrupted = true; break; }   // navigated away mid-replay
+    STATE.results = [...STATE.results, r];
+    renderTable();
+  }
+  // Data always ends up at the real state either way. Only re-render if the
+  // loop broke early — otherwise the accumulated pushes already equal `full`
+  // and a redundant render here would yank the last game's still-settling
+  // FLIP animation into a fresh one for no visible change.
+  STATE.results = full;
+  if (interrupted) renderTable();
+  _replayBusy = false;
+}
+
 async function syncResults(silent) {
   const st = document.getElementById('sync-status');
   if (st && !silent) st.textContent = 'Syncing…';
@@ -6328,9 +6375,15 @@ async function syncResults(silent) {
     const data = await res.json();
     if (data.not_available) { if (st) st.textContent = '2026/27 not started yet'; return; }
     if (!res.ok || data.error) { if (st && !silent) st.textContent = 'Sync failed'; return; }
+    // Snapshot which fixtures the table already knew about, before loadState
+    // overwrites STATE.results wholesale — this is what lets a sync that
+    // picks up several finished games play them onto the table one at a
+    // time afterward, instead of one reorder mixing all of them together.
+    const before = new Set(STATE.results.map(r => r.homeId + ':' + r.awayId));
     await loadState();
     if (data.added) _invalidateAnalytics();   // new match → every analytics view is stale
-    populateSelects(); renderTable(); renderResList(); renderStrTable(); updateFixtureBanner();
+    populateSelects(); renderResList(); renderStrTable(); updateFixtureBanner();
+    if (data.added) await _replayTable(before); else renderTable();
     if (st) {
       const live = (data.sources || []).includes('pulse') ? ' · live' : '';
       st.textContent = data.added
