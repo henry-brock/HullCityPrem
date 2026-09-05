@@ -335,7 +335,52 @@
       width: 4px;
       height: 38px;
       border-radius: 2px;
+      animation: zoneGrow 0.35s ease backwards;
     }
+    @keyframes zoneGrow { from { height: 0; } }
+
+    /* A team crossing a zone boundary (into/out of relegation, Europe, the
+       top of the table) gets one bright sweep through its row. */
+    @keyframes rowZoneAlert {
+      0%, 100% { background: transparent; }
+      35%      { background: rgba(255,255,255,0.07); }
+    }
+    tr.zone-alert { animation: rowZoneAlert 0.9s ease; }
+
+    /* A points or goal-difference cell that just moved from the value it had
+       last render — distinct from FLIP (position) and zone-alert (zone):
+       this is a value changing, not a row moving. */
+    @keyframes cellFlash {
+      0%   { background: rgba(245,161,45,0.4); border-radius: 4px; }
+      100% { background: transparent; }
+    }
+    .cell-flash { animation: cellFlash 1.2s ease; }
+
+    /* A one-shot light sweep across the season-progress bar when a new match
+       gets counted — the bar already transitions its width smoothly; this is
+       the moment something actually happened, not just a resize. */
+    .progress-fill { position: relative; overflow: hidden; }
+    .progress-fill.sheen::after {
+      content: ''; position: absolute; top: 0; left: 0; height: 100%; width: 50%;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.65), transparent);
+      animation: barSheen 0.85s ease;
+    }
+    @keyframes barSheen { from { transform: translateX(-140%); } to { transform: translateX(220%); } }
+
+    /* Full table / Form toggle — a pill that slides between the two buttons
+       rather than the active state just silently jumping. */
+    #table-mode-toggle { position: relative; }
+    .tm-pill {
+      position: absolute; top: 12px; height: 27px; border-radius: 5px;
+      background: rgba(245,161,45,0.15); border: 1px solid rgba(245,161,45,0.4);
+      transition: left 0.28s cubic-bezier(.3,.9,.4,1), width 0.28s cubic-bezier(.3,.9,.4,1);
+      pointer-events: none; z-index: 0;
+    }
+    /* An ID selector already outranks .sa-btn.active's two classes, so no
+       !important is needed to keep the buttons' own background out of the
+       way of the pill sliding behind them. */
+    #table-mode-toggle .sa-btn { position: relative; z-index: 1; background: transparent; border-color: transparent; }
+    #table-mode-toggle .sa-btn.active { color: #F5A12D; }
 
     .td-club {
       display: flex;
@@ -1472,7 +1517,15 @@
     .score-matrix td { transition: filter 0.12s ease, transform 0.1s ease; cursor: default; }
     .score-matrix td:hover { filter: brightness(1.35); transform: scale(1.08); position: relative; z-index: 1; }
     tr.lv-row td { box-shadow: inset 3px 0 0 #dc143c; }
-    .lv-delta { font-size: 0.62rem; margin-left: 5px; font-weight: 700; }
+    .lv-delta {
+      font-size: 0.62rem; margin-left: 5px; font-weight: 700; display: inline-block;
+      animation: posBounce 0.4s cubic-bezier(.34,1.56,.64,1);
+    }
+    @keyframes posBounce {
+      0%   { transform: scale(0.4) translateY(-4px); opacity: 0; }
+      65%  { transform: scale(1.2); opacity: 1; }
+      100% { transform: scale(1); }
+    }
     .lvs-panel {
       margin: 12px 0 4px; border: 1px solid rgba(220,20,60,0.30); border-radius: 7px;
       background: rgba(220,20,60,0.06); overflow: hidden;
@@ -1796,6 +1849,7 @@
         </div>
       </div>
       <div id="table-mode-toggle" class="sa-filters" style="border-bottom:none;padding-bottom:0">
+        <span class="tm-pill" id="tm-pill"></span>
         <button class="sa-btn active" data-mode="full" onclick="setTableMode('full')">Full table</button>
         <button class="sa-btn" data-mode="form" onclick="setTableMode('form')">Form (last 6)</button>
         <label class="lv-toggle" title="Fold in-progress scores into the standings. Provisional — nothing is saved.">
@@ -2941,11 +2995,32 @@ function buildTable(results, randomTie = false) {
 // RENDER TABLE
 // ═══════════════════════════════════════════════════
 let _tableMode = 'full';   // 'full' | 'form'
+// What the REAL (non-form, non-live) table looked like last render, so a
+// result that moves a team can be flagged even when no live match is
+// involved — the existing settled/liveTeams comparison only covers the
+// live case. Empty on first load, which correctly produces no animations
+// for the initial render.
+let _prevRealPos   = new Map();
+let _prevRealZone  = new Map();
+let _prevRealStats = new Map();
+let _prevPlayedCount = null;
 function setTableMode(m) {
   _tableMode = m;
   document.querySelectorAll('#table-mode-toggle .sa-btn').forEach(b =>
     b.classList.toggle('active', b.dataset.mode === m));
+  _positionTMPill();
   renderTable();
+}
+
+// Slides the highlight pill behind whichever button is active, measured from
+// the buttons themselves rather than hardcoded — so it stays correct if the
+// label text (and therefore the button width) ever changes.
+function _positionTMPill() {
+  const pill = document.getElementById('tm-pill');
+  const btn  = document.querySelector('#table-mode-toggle .sa-btn.active');
+  if (!pill || !btn) return;
+  pill.style.left  = btn.offsetLeft + 'px';
+  pill.style.width = btn.offsetWidth + 'px';
 }
 // results from the last `n` played matchweeks (league-wide form window)
 function _formResults(n) {
@@ -3102,18 +3177,36 @@ function renderTable() {
     const gdStr  = gd > 0 ? `+${gd}` : `${gd}`;
     const gdClass = gd > 0 ? 'gd-pos' : gd < 0 ? 'gd-neg' : 'gd-zero';
 
+    // Change detection against the last REAL render — skipped in form mode
+    // (a different ranking entirely) and skipped for any team a live match
+    // is already flagging, so a team never carries two rival delta arrows.
+    const trackable  = !form && !liveTeams.has(row.id);
+    const prevPos    = trackable ? _prevRealPos.get(row.id)   : undefined;
+    const prevZone   = trackable ? _prevRealZone.get(row.id)  : undefined;
+    const prevStat   = trackable ? _prevRealStats.get(row.id) : undefined;
+    const posMoved   = trackable && prevPos   !== undefined && prevPos   !== pos;
+    const zoneShifted = trackable && prevZone !== undefined && prevZone !== zoneClass;
+    const ptsChanged = trackable && prevStat  !== undefined && prevStat.pts !== row.pts;
+    const gdChanged  = trackable && prevStat  !== undefined && prevStat.gd  !== gd;
+
     const tr = document.createElement('tr');
-    tr.className = zoneClass + (liveTeams.has(row.id) ? ' lv-row' : '');
+    tr.className = zoneClass + (liveTeams.has(row.id) ? ' lv-row' : '') + (zoneShifted ? ' zone-alert' : '');
     tr.dataset.team = row.id;
     tr.innerHTML = `
       <td class="td-pos c">${pos}${(() => {
-        if (!settled || !liveTeams.has(row.id)) return '';
-        const was = settled.get(row.id);
-        if (was === pos) return '';
-        return `<span class="lv-delta ${was > pos ? 'lv-up' : 'lv-down'}">${
-          was > pos ? '▲' : '▼'}${Math.abs(was - pos)}</span>`;
+        if (settled && liveTeams.has(row.id)) {
+          const was = settled.get(row.id);
+          if (was === pos) return '';
+          return `<span class="lv-delta ${was > pos ? 'lv-up' : 'lv-down'}">${
+            was > pos ? '▲' : '▼'}${Math.abs(was - pos)}</span>`;
+        }
+        if (posMoved) {
+          return `<span class="lv-delta ${prevPos > pos ? 'lv-up' : 'lv-down'}">${
+            prevPos > pos ? '▲' : '▼'}${Math.abs(prevPos - pos)}</span>`;
+        }
+        return '';
       })()}</td>
-      <td class="td-bar"><div class="zone-bar" style="background:${barColor}"></div></td>
+      <td class="td-bar"><div class="zone-bar" style="background:${barColor};animation-delay:${i * 16}ms"></div></td>
       <td>
         <div class="td-club">
           <div class="badge" style="background:${team.col};${_crest(team.id)}"></div>
@@ -3127,13 +3220,25 @@ function renderTable() {
       <td class="c">${row.l}</td>
       <td class="c hide-sm">${row.gf}</td>
       <td class="c hide-sm">${row.ga}</td>
-      <td class="c ${gdClass}">${gdStr}</td>
-      <td class="c td-pts">${row.pts}</td>
+      <td class="c ${gdClass}${gdChanged ? ' cell-flash' : ''}">${gdStr}</td>
+      <td class="c td-pts${ptsChanged ? ' cell-flash' : ''}">${row.pts}</td>
       <td class="c hide-sm" style="color:var(--text-secondary);font-size:0.82rem">${proj ? proj[row.id] : '—'}</td>
       <td><div class="form-row">${formHtml}</div></td>
     `;
     tbody.appendChild(tr);
   });
+
+  // Snapshot this render as the baseline the NEXT one compares against —
+  // only meaningful outside form mode, since form's ranking is not the real
+  // table and comparing across the two would flag every team every time.
+  if (!form) {
+    _prevRealPos   = new Map(rows.map((r, i) => [r.id, i + 1]));
+    _prevRealZone  = new Map(rows.map((r, i) => {
+      const p = i + 1;
+      return [r.id, p <= 5 ? 'z-cl' : p <= 7 ? 'z-el' : p === 8 ? 'z-cf' : p >= 18 ? 'z-rl' : ''];
+    }));
+    _prevRealStats = new Map(rows.map(r => [r.id, { pts: r.pts, gd: r.gf - r.ga }]));
+  }
 
   // FLIP play: set every moved row's offset with transitions off, force one
   // reflow so the browser actually paints that "before" position, then clear
@@ -3158,7 +3263,17 @@ function renderTable() {
   const n = STATE.results.length;
   document.getElementById('st-played').textContent = n;
   document.getElementById('st-rem').textContent = 380 - n;
-  document.getElementById('st-bar').style.width = (n / 380 * 100) + '%';
+  const bar = document.getElementById('st-bar');
+  bar.style.width = (n / 380 * 100) + '%';
+  // One sweep of light across the bar when a new match gets counted — the
+  // width transition already handles the resize, this marks the moment.
+  if (_prevPlayedCount !== null && n !== _prevPlayedCount) {
+    bar.classList.remove('sheen');
+    bar.offsetHeight;              // force a reflow so re-adding the class restarts the animation
+    bar.classList.add('sheen');
+  }
+  _prevPlayedCount = n;
+  _positionTMPill();
   document.getElementById('st-leader').textContent = rows.length ? teamMap[rows[0].id].short : '—';
   document.getElementById('st-bottom').textContent = rows.length ? teamMap[rows[rows.length - 1].id].short : '—';
 
