@@ -998,6 +998,18 @@
 
     .fx-form { display: flex; gap: 2px; }
 
+    .md-panel {
+      margin-top: 9px; padding-top: 9px; border-top: 1px solid rgba(255,255,255,0.06);
+    }
+    .md-forms { display: flex; gap: 6px; margin-bottom: 7px; }
+    .md-timeline {
+      display: flex; flex-wrap: wrap; gap: 5px 10px; font-size: 0.68rem;
+      color: var(--text-secondary); margin-bottom: 4px;
+    }
+    .md-ev { white-space: nowrap; }
+    .md-ev-h { color: #e0e0e0; }
+    .md-ev-a { color: #e0e0e0; opacity: 0.82; }
+
     .fx-mid {
       flex-shrink: 0;
       text-align: center;
@@ -2360,6 +2372,7 @@ function _invalidateAnalytics() {
   _dvData = null;      // Derived Stats
   _stylesData = null;  // Style fingerprints
   _prData = null;      // Player Rater + per-opportunity table
+  _mdData = null;       // Match detail (formations, goals, cards) per fixture
 }
 
 function saveState() {
@@ -3475,6 +3488,7 @@ function fullTimeHTML(f, result) {
       ${exLine}
       <span style="opacity:.6">&nbsp;·&nbsp; pre-match xG ${p.hxg} – ${p.axg}</span>
     </div>
+    ${_matchDetailHTML(f.homeId, f.awayId)}
     ${_matchStatsHTML(result)}
     ${_ratingDeltaHTML(f, result)}
     <div class="ft-impact" id="imp-${f.homeId}-${f.awayId}">
@@ -4724,8 +4738,62 @@ function initMatchweek() {
   if (!_stylesData) { fetch('/api/styles').then(r => r.json()).then(d => {
     _stylesData = d.teams || []; renderMatchweekPage(_currentMW);
   }).catch(() => {}); }
+  if (!_mdData) { fetch('/api/matchdetails?season=2627').then(r => r.json()).then(d => {
+    _mdData = d.matches || {}; renderMatchweekPage(_currentMW);
+  }).catch(() => {}); }
   renderMatchweekPage(getCurrentMatchweek());
   loadLive();
+}
+
+// Formations, goal/card timeline and a fuller stat set for every FINISHED
+// match, fetched once for the whole season — see /api/matchdetails. Six of
+// its eleven stats overlap what _matchStatsHTML already shows from the
+// older scraped result record (Possession, Shots, On target, Touches in
+// box, Corners), so only the genuinely new ones are added here rather than
+// shown twice: shots in box, big chances, crosses, passes, tackles,
+// clearances.
+let _mdData = null;
+const MD_EXTRA_STATS = ['Shots in box', 'Big chances', 'Crosses', 'Passes', 'Tackles', 'Clearances'];
+const MD_EVENT_ICON  = { goal: '⚽', yellow: '🟨', red: '🟥' };
+
+function _matchDetailHTML(homeId, awayId) {
+  const d = _mdData && _mdData[`${homeId}:${awayId}`];
+  if (!d) return '';
+  const h = teamMap[homeId], a = teamMap[awayId];
+  const hf = d.formations && d.formations[homeId];
+  const af = d.formations && d.formations[awayId];
+
+  const timeline = (d.events || []).length
+    ? `<div class="md-timeline">${d.events.map(e => `
+        <span class="md-ev md-ev-${e.team === homeId ? 'h' : 'a'}" title="${e.player}, ${e.clock}">
+          ${MD_EVENT_ICON[e.type] || '·'} ${e.clock ? e.clock.replace("'00", "'") : ''} ${e.player}
+        </span>`).join('')}</div>`
+    : '';
+
+  const st = d.stats;
+  const idx = st ? MD_EXTRA_STATS.map(lab => st.labels.indexOf(lab)).filter(i => i >= 0) : [];
+  const rows = idx.map(i => {
+    const hv = st.home[i], av = st.away[i];
+    if (hv == null && av == null) return '';
+    const x = Number(hv || 0), y = Number(av || 0);
+    const pct = (x + y) ? (x / (x + y)) * 100 : 50;
+    return `<tr>
+      <td style="text-align:right;width:15%"><strong>${hv ?? '–'}</strong></td>
+      <td style="width:44%"><div class="lvs-bar"><div class="lvs-fill" style="width:${pct.toFixed(0)}%"></div></div></td>
+      <td class="pr-dim" style="text-align:left;width:15%">${av ?? '–'}</td>
+      <td class="pr-dim" style="text-align:left;font-size:0.64rem">${st.labels[i]}</td>
+    </tr>`;
+  }).join('');
+
+  if (!hf && !af && !timeline && !rows) return '';
+  return `<div class="md-panel">
+    ${(hf || af) ? `<div class="md-forms">
+      ${hf ? `<span class="fm-chip">${h.short} ${hf}</span>` : ''}
+      ${af ? `<span class="fm-chip">${a.short} ${af}</span>` : ''}
+    </div>` : ''}
+    ${timeline}
+    ${rows ? `<table class="pr-tbl lvs-tbl" style="margin-top:6px"><tbody>${rows}</tbody></table>` : ''}
+  </div>`;
 }
 
 // Style tag + press tag + last-4 form, the same signals Scout already shows

@@ -79,9 +79,12 @@ def fetch(season: str = "2627", force: bool = False) -> dict:
         except Exception as exc:
             print(f"[lineups] {fid} failed: {exc}", file=sys.stderr)
             continue
-        sides = []
+        sides, players = [], {}
         for tl in fx.get("teamLists") or []:
             form = tl.get("formation") or {}
+            for pl in (tl.get("lineup") or []) + (tl.get("substitutes") or []):
+                if pl.get("id"):
+                    players[str(int(pl["id"]))] = (pl.get("name") or {}).get("display")
             if not form.get("players"):
                 continue
             sides.append({
@@ -94,7 +97,18 @@ def fetch(season: str = "2627", force: bool = False) -> dict:
                 "pos":       {str(int(pl["id"])): pl.get("matchPosition")
                               for pl in (tl.get("lineup") or []) if pl.get("id")},
             })
-        cached[key] = sides
+        # Goals and bookings — the fixture payload already carries a full
+        # events feed and this endpoint is being fetched anyway for the
+        # formation, so capturing it costs nothing extra. A finished match's
+        # events do not change, unlike its live stat block, so this is fetched
+        # once and never revisited.
+        events = [
+            {"type": e.get("type"), "teamId": e.get("teamId"),
+             "personId": e.get("personId"), "clock": (e.get("clock") or {}).get("label"),
+             "desc": e.get("description")}
+            for e in (fx.get("events") or []) if e.get("type") in ("G", "B")
+        ]
+        cached[key] = {"sides": sides, "events": events, "players": players}
         fetched += 1
         time.sleep(REQUEST_DELAY)
         if fetched % 50 == 0:
@@ -104,6 +118,16 @@ def fetch(season: str = "2627", force: bool = False) -> dict:
     path.write_text(json.dumps({"season": season, "fixtures": cached}))
     print(f"[lineups] {season}: {len(cached)} matches ({fetched} fetched)", file=sys.stderr)
     return cached
+
+
+def _sides(rec) -> list:
+    """A fixture's per-side formation records, from either cache shape.
+
+    Older cache files stored a bare list; fetch() now stores a dict alongside
+    events and player names. Reading through this means the format could
+    change again without a forced rebuild being the only way forward.
+    """
+    return rec if isinstance(rec, list) else (rec or {}).get("sides", [])
 
 
 def slot_role(rows: list[list[int]], row_i: int, slot_i: int) -> str:
@@ -157,8 +181,8 @@ def derive(season: str = "2627") -> dict:
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
     tally = {}
-    for sides in data.values():
-        for side in sides:
+    for rec in data.values():
+        for side in _sides(rec):
             rows = side["rows"]
             for r, row in enumerate(rows):
                 for s, pid in enumerate(row):
@@ -202,7 +226,8 @@ def formations(season: str = "2627") -> dict:
     names = _team_map(season)
 
     teams = {}
-    for sides in data.values():
+    for rec in data.values():
+        sides = _sides(rec)
         for i, side in enumerate(sides):
             tid = names.get(side.get("teamId"))
             if not tid:
@@ -231,6 +256,97 @@ def formations(season: str = "2627") -> dict:
             "variety":  len(r["used"]),
             "avgBack":  round(sum(r["back"]) / len(r["back"]), 2) if r["back"] else None,
             "avgFront": round(sum(r["front"]) / len(r["front"]), 2) if r["front"] else None,
+        }
+    return out
+
+
+# Same stat set /api/live shows for a match in progress. Centralised here
+# rather than duplicated in app.py, since a finished match's detail panel and
+# a live one are the same nine numbers off the same kind of Opta block —
+# Newcache's for a finished game, a fresh Pulse call for one still being played.
+MATCH_STATS = [
+    ("possession_percentage", "Possession %"),
+    ("total_scoring_att",     "Shots"),
+    ("ontarget_scoring_att",  "On target"),
+    ("attempts_ibox",         "Shots in box"),
+    ("big_chance_created",    "Big chances"),
+    ("touches_in_opp_box",    "Touches in box"),
+    ("total_cross",           "Crosses"),
+    ("won_corners",           "Corners"),
+    ("total_pass",            "Passes"),
+    ("total_tackle",          "Tackles"),
+    ("total_clearance",       "Clearances"),
+]
+
+
+def _clock_key(event: dict) -> int:
+    """Sort key for a clock label like "45+3'00" — stoppage time sorts after
+    the minute it extends, not before it as a plain string sort would."""
+    label = (event.get("clock") or "0'00").split("'")[0]
+    base, _, extra = label.partition("+")
+    try:
+        return int(base or 0) * 100 + int(extra or 0)
+    except ValueError:
+        return 0
+
+
+def match_details(season: str = "2627") -> dict:
+    """
+    Formations, goals/cards and a full stat comparison for every completed
+    match this season, keyed "homeId:awayId" — everything a full-time fixture
+    card needs, in one call rather than one round trip per finished game.
+
+    The stats come straight from Newcache's own per-match Opta block, already
+    fetched and cached for the team-stats and derived-stats pages, so this
+    adds no network cost beyond the formations/events walk fetch() already
+    does. A match missing from the lineup cache (not yet fetched, or from
+    before lineups.py existed) still gets its stats, just no formations or
+    events — degrading gracefully rather than dropping the whole card.
+    """
+    archive = ROOT / "Newcache" / f"pl_{season}.json"
+    if not archive.exists():
+        return {}
+    matches = json.loads(archive.read_text())["matches"]
+    try:
+        cache = json.loads(_cache_path(season).read_text()).get("fixtures", {})
+    except (FileNotFoundError, json.JSONDecodeError):
+        cache = {}
+    names = _team_map(season)
+
+    out = {}
+    for m in matches:
+        rec = cache.get(str(m["fixtureId"]))
+        formations_by_team, events = {}, []
+        if rec:
+            for side in _sides(rec):
+                tid = names.get(side.get("teamId"))
+                if tid:
+                    formations_by_team[tid] = side.get("formation")
+            if isinstance(rec, dict):
+                players = rec.get("players", {})
+                for e in rec.get("events", []):
+                    tid = names.get(e.get("teamId"))
+                    if not tid:
+                        continue
+                    events.append({
+                        "type":   "goal" if e["type"] == "G" else
+                                  ("red" if e.get("desc") == "R" else "yellow"),
+                        "team":   tid,
+                        "player": players.get(str(e.get("personId"))) or "?",
+                        "clock":  e.get("clock"),
+                    })
+                events.sort(key=_clock_key)
+
+        home_stats = (m["stats"] or {}).get("home") or {}
+        away_stats = (m["stats"] or {}).get("away") or {}
+        out[f"{m['homeId']}:{m['awayId']}"] = {
+            "formations": formations_by_team,
+            "events":     events,
+            "stats": {
+                "labels": [lab for _, lab in MATCH_STATS],
+                "home":   [home_stats.get(k) for k, _ in MATCH_STATS],
+                "away":   [away_stats.get(k) for k, _ in MATCH_STATS],
+            },
         }
     return out
 

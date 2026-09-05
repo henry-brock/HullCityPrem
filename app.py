@@ -368,25 +368,9 @@ def hull_analysis(league):
         return jsonify({"players": [], "error": str(exc)}), 500
 
 
-# Stats worth watching mid-match, in the order Scout shows them.
-LIVE_STATS = [
-    ("possession_percentage", "Possession %"),
-    ("total_scoring_att",     "Shots"),
-    ("ontarget_scoring_att",  "On target"),
-    ("attempts_ibox",         "Shots in box"),
-    ("big_chance_created",    "Big chances"),
-    ("touches_in_opp_box",    "Touches in box"),
-    ("total_cross",           "Crosses"),
-    ("won_corners",           "Corners"),
-    ("total_pass",            "Passes"),
-    ("total_tackle",          "Tackles"),
-    ("total_clearance",       "Clearances"),
-]
-
-
 def _live_detail(fixture_id: int, ids: list) -> dict:
     """Formations and a readable slice of the live Opta blocks."""
-    from lineups import _team_map
+    from lineups import MATCH_STATS, _team_map
     from pulse_results import _fetch_match_stats
     from pl_players import _pulse_get
 
@@ -397,9 +381,9 @@ def _live_detail(fixture_id: int, ids: list) -> dict:
         by_id  = {names.get(int(t)): b for t, b in blocks.items() if names.get(int(t))}
         if by_id:
             out["stats"] = {
-                "labels": [lab for _, lab in LIVE_STATS],
-                "home":   [(by_id.get(ids[0]) or {}).get(k) for k, _ in LIVE_STATS],
-                "away":   [(by_id.get(ids[1]) or {}).get(k) for k, _ in LIVE_STATS],
+                "labels": [lab for _, lab in MATCH_STATS],
+                "home":   [(by_id.get(ids[0]) or {}).get(k) for k, _ in MATCH_STATS],
+                "away":   [(by_id.get(ids[1]) or {}).get(k) for k, _ in MATCH_STATS],
             }
     except Exception:
         pass
@@ -459,6 +443,23 @@ def live_matches():
         return jsonify({"live": out})
     except Exception as exc:
         return jsonify({"live": [], "error": str(exc)}), 500
+
+
+@app.route("/api/matchdetails")
+def match_details_route():
+    """Formations, goals/cards and a full stat comparison for every finished
+    match — everything a full-time fixture card needs, in one call."""
+    season = request.args.get("season", "2627")
+    try:
+        import lineups
+        if request.args.get("refresh", "1") == "1":
+            try:
+                lineups.fetch(season)
+            except Exception as exc:
+                print(f"[matchdetails] refresh skipped: {exc}", file=sys.stderr)
+        return jsonify({"matches": lineups.match_details(season)})
+    except Exception as exc:
+        return jsonify({"matches": {}, "error": str(exc)}), 500
 
 
 @app.route("/api/formations")
