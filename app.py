@@ -466,8 +466,16 @@ def formations():
     """Starting shapes each team has used, and what they have faced."""
     season = request.args.get("season", "2627")
     try:
-        from lineups import formations as build
-        teams = build(season)
+        import lineups
+        # Incremental top-up, same pattern as /api/teamstats: fetch() only
+        # pulls fixtures it has never cached, so this costs one archive read
+        # plus any brand-new matches, not a rebuild.
+        if request.args.get("refresh", "1") == "1":
+            try:
+                lineups.fetch(season)
+            except Exception as exc:
+                print(f"[formations] refresh skipped: {exc}", file=sys.stderr)
+        teams = lineups.formations(season)
         league = defaultdict(int)
         for r in teams.values():
             for shape, n in r["shapes"].items():

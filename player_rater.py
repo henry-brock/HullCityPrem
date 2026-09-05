@@ -294,8 +294,15 @@ def _derived_roles(season: str) -> dict:
     """player id -> role, from the starting formations he appeared in."""
     if season not in _DERIVED_CACHE:
         try:
-            from lineups import derive
-            _DERIVED_CACHE[season] = derive(season)
+            import lineups
+            # Incremental top-up: fetch() only pulls fixtures it has never
+            # cached. Without this the lineup cache only ever advanced via a
+            # manual CLI run, so roles silently froze at whatever matchweek
+            # that run happened to catch — the same staleness bug already
+            # fixed once for Newcache and the results cache, showing up a
+            # third time in a third cache.
+            lineups.fetch(season)
+            _DERIVED_CACHE[season] = lineups.derive(season)
         except Exception as exc:                       # no lineup cache yet
             print(f"[player_rater] derived roles unavailable: {exc}", file=sys.stderr)
             _DERIVED_CACHE[season] = {}
