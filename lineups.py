@@ -276,7 +276,14 @@ MATCH_STATS = [
     ("total_pass",            "Passes"),
     ("total_tackle",          "Tackles"),
     ("total_clearance",       "Clearances"),
+    ("ppda",                  "PPDA (press)"),
+    ("total_yel_card",        "Cards"),
 ]
+
+# Stats where a LOWER number is the better one — PPDA is passes allowed per
+# defensive action, so intense pressing produces a small number. Everything
+# else in MATCH_STATS reads the normal way: more is more.
+INVERTED_STATS = {"PPDA (press)"}
 
 
 def _clock_key(event: dict) -> int:
@@ -288,6 +295,23 @@ def _clock_key(event: dict) -> int:
         return int(base or 0) * 100 + int(extra or 0)
     except ValueError:
         return 0
+
+
+def _lineup_names(rec, names: dict) -> dict:
+    """Starting XI for each side, by internal team id, as last names grouped
+    into formation rows — the same rows slot_role reads, just with a name in
+    place of an id."""
+    out = {}
+    if not isinstance(rec, dict):
+        return out
+    players = rec.get("players", {})
+    for side in rec.get("sides", []):
+        tid = names.get(side.get("teamId"))
+        if not tid:
+            continue
+        out[tid] = [[(players.get(str(pid)) or "?").split()[-1] for pid in row]
+                    for row in side["rows"]]
+    return out
 
 
 def match_details(season: str = "2627") -> dict:
@@ -341,6 +365,7 @@ def match_details(season: str = "2627") -> dict:
         away_stats = (m["stats"] or {}).get("away") or {}
         out[f"{m['homeId']}:{m['awayId']}"] = {
             "formations": formations_by_team,
+            "lineup":     _lineup_names(rec, names) if rec else {},
             "events":     events,
             "stats": {
                 "labels": [lab for _, lab in MATCH_STATS],

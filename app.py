@@ -369,12 +369,12 @@ def hull_analysis(league):
 
 
 def _live_detail(fixture_id: int, ids: list) -> dict:
-    """Formations and a readable slice of the live Opta blocks."""
+    """Formations, starting lineups and a readable slice of the live Opta blocks."""
     from lineups import MATCH_STATS, _team_map
     from pulse_results import _fetch_match_stats
     from pl_players import _pulse_get
 
-    out = {"stats": None, "formations": None}
+    out = {"stats": None, "formations": None, "lineup": None}
     try:
         blocks = _fetch_match_stats(fixture_id)
         names  = _team_map("2627")
@@ -390,12 +390,24 @@ def _live_detail(fixture_id: int, ids: list) -> dict:
     try:
         fx = _pulse_get(f"fixtures/{fixture_id}")
         names = _team_map("2627")
-        form = {}
+        form, lineup = {}, {}
         for tl in fx.get("teamLists") or []:
             tid = names.get(int(tl.get("teamId")))
-            if tid:
-                form[tid] = (tl.get("formation") or {}).get("label")
+            if not tid:
+                continue
+            form[tid] = (tl.get("formation") or {}).get("label")
+            # Same last-name-only, formation-row grouping match_details() uses
+            # for a finished game, built here from the live payload instead of
+            # the cache — a live lineup does not wait for a settle window,
+            # since who started is fixed at kickoff and never revised.
+            rows = (tl.get("formation") or {}).get("players") or []
+            id_to_name = {str(int(p["id"])): (p.get("name") or {}).get("display")
+                          for p in (tl.get("lineup") or []) if p.get("id")}
+            if rows:
+                lineup[tid] = [[(id_to_name.get(str(pid)) or "?").split()[-1]
+                               for pid in row] for row in rows]
         out["formations"] = form or None
+        out["lineup"] = lineup or None
     except Exception:
         pass
     return out

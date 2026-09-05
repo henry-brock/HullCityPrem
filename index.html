@@ -1010,6 +1010,58 @@
     .md-ev-h { color: #e0e0e0; }
     .md-ev-a { color: #e0e0e0; opacity: 0.82; }
 
+    .md-lineup-wrap { margin-top: 8px; }
+    .md-lineup-btn {
+      background: rgba(245,161,45,0.12); border: 1px solid rgba(245,161,45,0.35);
+      color: #F5A12D; font-size: 0.64rem; font-weight: 800; padding: 4px 11px;
+      border-radius: 5px; cursor: pointer; letter-spacing: 0.02em;
+      transition: background 0.15s ease, transform 0.1s ease;
+    }
+    .md-lineup-btn:hover  { background: rgba(245,161,45,0.24); }
+    .md-lineup-btn:active { transform: scale(0.96); }
+    .md-lineup-body {
+      max-height: 0; overflow: hidden; opacity: 0;
+      transition: max-height 0.45s cubic-bezier(.16,1,.3,1), opacity 0.3s ease, margin-top 0.3s ease;
+    }
+    .md-lineup-body.open { max-height: 480px; opacity: 1; margin-top: 9px; }
+    .md-lineup-team { margin-bottom: 7px; }
+    .md-lineup-name {
+      font-size: 0.62rem; font-weight: 900; text-transform: uppercase;
+      letter-spacing: 0.06em; margin-bottom: 4px;
+    }
+    .md-lineup-row { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+    .md-chip {
+      font-size: 0.66rem; padding: 2px 8px; border-radius: 10px; border: 1px solid;
+      background: rgba(255,255,255,0.04); white-space: nowrap;
+    }
+
+    /* ── flair: card entrance, live glow, score pop ── */
+    @keyframes cardIn {
+      from { opacity: 0; transform: translateY(10px) scale(0.985); }
+      to   { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    #mw-grid .fixture-card {
+      animation: cardIn 0.4s cubic-bezier(.16,1,.3,1) backwards;
+    }
+    @keyframes liveEdge {
+      0%, 100% { box-shadow: 0 0 0 1px rgba(220,20,60,0.35), 0 0 16px rgba(220,20,60,0.18); }
+      50%      { box-shadow: 0 0 0 1px rgba(220,20,60,0.6),  0 0 26px rgba(220,20,60,0.38); }
+    }
+    /* #mw-grid raises this above the base #mw-grid .fixture-card rule, which
+       an equal-or-lower-specificity .fixture-card.fx-live would lose to
+       regardless of source order — an ID selector always outranks classes. */
+    #mw-grid .fixture-card.fx-live {
+      animation: cardIn 0.4s cubic-bezier(.16,1,.3,1) backwards,
+                 liveEdge 2.4s ease-in-out infinite;
+    }
+    .lvs-live .lv-dot { width: 8px; height: 8px; }
+    @keyframes scorePop {
+      0%   { transform: scale(1);    color: #dc143c; }
+      35%  { transform: scale(1.35); color: #ff4d5e; text-shadow: 0 0 14px rgba(220,20,60,0.7); }
+      100% { transform: scale(1);    color: inherit; }
+    }
+    .fx-score.fx-score-pop { display: inline-block; animation: scorePop 1s ease-out; }
+
     .fx-mid {
       flex-shrink: 0;
       text-align: center;
@@ -1322,12 +1374,22 @@
       display: flex; align-items: center; gap: 9px; padding: 8px 12px;
       background: rgba(220,20,60,0.10); font-size: 0.8rem;
     }
-    .lvs-tbl { width: 100%; }
-    .lvs-tbl td { padding: 3px 6px; border: none; font-size: 0.74rem; }
+    .lvs-tbl { width: 100%; border-collapse: collapse; }
+    .lvs-tbl td { padding: 5px 6px; border: none; font-size: 0.78rem; }
+    .lvs-val { width: 15%; font-variant-numeric: tabular-nums; }
+    .lvs-barcell { width: 44%; }
+    .lvs-lbl { width: 15%; font-size: 0.66rem; white-space: nowrap; }
     .lvs-bar {
-      height: 6px; border-radius: 3px; background: rgba(255,255,255,0.09); overflow: hidden;
+      height: 13px; border-radius: 7px; background: rgba(255,255,255,0.07);
+      overflow: hidden; box-shadow: inset 0 1px 2px rgba(0,0,0,0.3);
     }
-    .lvs-fill { height: 100%; background: #F5A12D; }
+    .lvs-fill {
+      height: 100%; border-radius: 7px; width: var(--w, 50%);
+      background: linear-gradient(90deg, #c97a1a, #F5A12D 55%, #ffc46b);
+      box-shadow: 0 0 10px rgba(245,161,45,0.55);
+      animation: lvsgrow 0.85s cubic-bezier(.16,1,.35,1);
+    }
+    @keyframes lvsgrow { from { width: 0%; box-shadow: none; } }
     .lvs-note {
       padding: 7px 12px 9px; font-size: 0.66rem; line-height: 1.5;
       color: var(--text-secondary);
@@ -2476,6 +2538,29 @@ const TEAM_ESPN = {
 // (white ring, dark detail) that averaging hides.
 const CREST_NEEDS_PLATE = new Set(['liverpool', 'tottenham', 'nottmforest']);
 
+// One stat-bar renderer for every place that shows a head-to-head stat
+// comparison: the live table strip, Scout's live panel, matchweek's live
+// cards and matchweek's full-time cards. Same markup, same animation, same
+// thickness everywhere, rather than four slightly different tables that
+// happened to accumulate one feature at a time.
+function _statBarRows(labels, homeVals, awayVals, invertSet) {
+  return labels.map((lab, i) => {
+    const hv = homeVals[i], av = awayVals[i];
+    if (hv == null && av == null) return '';
+    const x = Number(hv || 0), y = Number(av || 0);
+    let pct = (x + y) ? (x / (x + y)) * 100 : 50;
+    if (invertSet && invertSet.has(lab)) pct = 100 - pct;
+    return `<tr>
+      <td class="lvs-val" style="text-align:right"><strong>${hv ?? '–'}</strong></td>
+      <td class="lvs-barcell"><div class="lvs-bar"><div class="lvs-fill" style="--w:${pct.toFixed(0)}%"></div></div></td>
+      <td class="lvs-val pr-dim" style="text-align:left">${av ?? '–'}</td>
+      <td class="pr-dim lvs-lbl">${lab}</td>
+    </tr>`;
+  }).join('');
+}
+
+const STAT_INVERT = new Set(['PPDA (press)']);
+
 function _crest(id) {
   const e = TEAM_ESPN[id];
   if (!e) return '';
@@ -2772,6 +2857,7 @@ function _formResults(n) {
 // table for display and never written to STATE, data.json or any cache. Turn
 // the toggle off and every trace of it is gone.
 let _liveData = [];
+let _justScored = new Set();  // "home:away" keys whose score changed on the last poll
 let _liveInclude = false;
 let _liveTimer = null;
 const LIVE_POLL_MS = 60000;
@@ -2789,7 +2875,18 @@ async function loadLive() {
   try {
     const r = await fetch('/api/live?detail=1');
     const d = await r.json();
-    if (r.ok && !d.error) _liveData = d.live || [];
+    if (r.ok && !d.error) {
+      const fresh = d.live || [];
+      // Which fixtures moved since the last poll, so the score itself can
+      // flash rather than just silently being a different number next time
+      // you look — the one moment on this page actually worth a flourish.
+      const before = new Map(_liveData.map(m => [`${m.homeId}:${m.awayId}`, `${m.homeGoals}-${m.awayGoals}`]));
+      _justScored = new Set(fresh
+        .filter(m => before.has(`${m.homeId}:${m.awayId}`)
+                  && before.get(`${m.homeId}:${m.awayId}`) !== `${m.homeGoals}-${m.awayGoals}`)
+        .map(m => `${m.homeId}:${m.awayId}`));
+      _liveData = fresh;
+    }
   } catch (e) {
     /* keep the last known state */
   }
@@ -2833,10 +2930,11 @@ function renderLiveStrip() {
   el.innerHTML = _liveData.map(m => {
     const h = teamMap[m.homeId], a = teamMap[m.awayId];
     if (!h || !a) return '';
+    const popped = _justScored.has(`${m.homeId}:${m.awayId}`);
     return `<div class="lv-match">
       <span class="lv-dot"></span>
       <span class="lv-crest" style="${_crest(m.homeId)}"></span>${h.short}
-      <strong>${m.homeGoals}–${m.awayGoals}</strong>
+      <strong class="${popped ? 'fx-score-pop' : ''}">${m.homeGoals}–${m.awayGoals}</strong>
       ${a.short}<span class="lv-crest" style="${_crest(m.awayId)}"></span>
       <span class="lv-clock">${m.clock || ''}</span>
     </div>`;
@@ -3381,28 +3479,26 @@ async function analyseResult(key) {
 
 // Match stats, showing only the fields this result actually carries — hand
 // entered results have none of them, Pulse-synced ones have the lot.
+// Fallback stat panel for a completed match with no /api/matchdetails entry
+// — an imported historical result, or a season lineups.py has not covered.
+// Same shared bar renderer as everywhere else, so a card never looks like it
+// is missing an upgrade just because its data came from an older source.
 function _matchStatsHTML(r) {
   const rows = [
-    ['Possession',    r.homePossession,   r.awayPossession,   v => v.toFixed(1) + '%'],
-    ['Shots',         r.homeShots,        r.awayShots,        v => v],
-    ['On target',     r.homeShotsOnTarget, r.awayShotsOnTarget, v => v],
-    ['Touches in box', r.homeTouchesInBox, r.awayTouchesInBox, v => v],
-    ['Corners',       r.homeCorners,      r.awayCorners,      v => v],
-    ['PPDA (press)',  r.homePPDA,         r.awayPPDA,         v => v.toFixed(1)],
-    ['Cards',         r.homeYellow,       r.awayYellow,       v => v],
+    ['Possession %',  r.homePossession,   r.awayPossession],
+    ['Shots',         r.homeShots,        r.awayShots],
+    ['On target',     r.homeShotsOnTarget, r.awayShotsOnTarget],
+    ['Touches in box', r.homeTouchesInBox, r.awayTouchesInBox],
+    ['Corners',       r.homeCorners,      r.awayCorners],
+    ['PPDA (press)',  r.homePPDA,         r.awayPPDA],
+    ['Cards',         r.homeYellow,       r.awayYellow],
   ].filter(([, h, a]) => h !== undefined && h !== null && a !== undefined && a !== null);
-
   if (!rows.length) return '';
-  return `<div class="ft-stats">${rows.map(([label, h, a, fmt]) => {
-    const tot = (Number(h) + Number(a)) || 1;
-    const hp  = Math.round(Number(h) / tot * 100);
-    // PPDA is inverted: a LOWER value means more intense pressing.
-    const hb  = label.startsWith('PPDA') ? 100 - hp : hp;
-    return `<div class="ft-stat">
-      <div class="ft-stat-row"><span>${fmt(Number(h))}</span><span class="ft-stat-l">${label}</span><span>${fmt(Number(a))}</span></div>
-      <div class="ft-bar"><div class="ft-bar-h" style="width:${hb}%"></div></div>
-    </div>`;
-  }).join('')}</div>`;
+  const labels = rows.map(x => x[0]);
+  const home   = rows.map(x => x[1]);
+  const away   = rows.map(x => x[2]);
+  return `<table class="pr-tbl lvs-tbl" style="margin-top:8px">
+    <tbody>${_statBarRows(labels, home, away, STAT_INVERT)}</tbody></table>`;
 }
 
 // How this result moved each side's attack/defence rating — i.e. what the
@@ -3488,8 +3584,7 @@ function fullTimeHTML(f, result) {
       ${exLine}
       <span style="opacity:.6">&nbsp;·&nbsp; pre-match xG ${p.hxg} – ${p.axg}</span>
     </div>
-    ${_matchDetailHTML(f.homeId, f.awayId)}
-    ${_matchStatsHTML(result)}
+    ${(_mdData && _mdData[key]) ? _matchDetailHTML(f.homeId, f.awayId) : _matchStatsHTML(result)}
     ${_ratingDeltaHTML(f, result)}
     <div class="ft-impact" id="imp-${f.homeId}-${f.awayId}">
       <button class="ft-btn" onclick="analyseResult('${key}')">Analyse Hull impact →</button>
@@ -3512,11 +3607,12 @@ function renderMatchweekPage(mw) {
                          `${playedCount} / 10 results confirmed`;
 
   document.getElementById('mw-summary').innerHTML = buildMatchweekSummary(fixtures);
-  document.getElementById('mw-grid').innerHTML = fixtures.map(f => {
+  document.getElementById('mw-grid').innerHTML = fixtures.map((f, idx) => {
     const ht        = teamMap[f.homeId];
     const at        = teamMap[f.awayId];
     const isHull    = f.homeId === 'hull' || f.awayId === 'hull';
     const hullCls   = isHull ? ' hull-game' : '';
+    const cardDelay = `animation-delay:${idx * 35}ms`;
     const result    = STATE.results.find(r => r.homeId === f.homeId && r.awayId === f.awayId);
     // A result already synced always wins — see loadLive's note on
     // _liveUnplayed, a fixture can finish and be entered while the feed still
@@ -3537,7 +3633,7 @@ function renderMatchweekPage(mw) {
             ? `<div class="fx-score">${result.homeGoals}–${result.awayGoals}</div>
                <div class="fx-confirmed">Full Time</div>`
             : live
-            ? `<div class="fx-score">${live.homeGoals}–${live.awayGoals}</div>
+            ? `<div class="fx-score${_justScored.has(f.homeId + ':' + f.awayId) ? ' fx-score-pop' : ''}">${live.homeGoals}–${live.awayGoals}</div>
                <div class="fx-confirmed" style="color:#dc143c"><span class="lv-dot"></span> ${live.clock || 'LIVE'}</div>`
             : `<div class="fx-vs">vs</div>`}
         </div>
@@ -3551,14 +3647,14 @@ function renderMatchweekPage(mw) {
       </div>`;
 
     if (result) {
-      return `<div class="fixture-card${hullCls}">${teamRow}${fullTimeHTML(f, result)}</div>`;
+      return `<div class="fixture-card${hullCls}" style="${cardDelay}">${teamRow}${fullTimeHTML(f, result)}</div>`;
     }
 
     if (live) {
       // Live replaces the prediction entirely rather than sitting alongside
       // it — showing a pre-match win/draw/loss estimate next to an actual
       // scoreline would read as the model still guessing mid-match.
-      return `<div class="fixture-card${hullCls}">${teamRow}${_liveFixtureBody(live)}
+      return `<div class="fixture-card fx-live${hullCls}" style="${cardDelay}">${teamRow}${_liveFixtureBody(live)}
         <div class="lvs-note">Provisional — not saved. Mid-match numbers describe the
           state of the game as much as the team.</div></div>`;
     }
@@ -3570,7 +3666,7 @@ function renderMatchweekPage(mw) {
     const lLabel = lPct  >= 12 ? `${lPct}%`  : '';
 
     return `
-      <div class="fixture-card${hullCls}">
+      <div class="fixture-card${hullCls}" style="${cardDelay}">
         ${teamRow}
         <div class="wdl-bar">
           <div class="wdl-seg wdl-seg-w" style="flex:${wPct || 0.1}">${wLabel}</div>
@@ -4145,32 +4241,25 @@ function _scoutLivePanel(teamId) {
   const m = _scoutLiveFor(teamId);
   if (!m) return '';
   const isHome = m.homeId === teamId;
-  const them = teamMap[teamId], opp = teamMap[isHome ? m.awayId : m.homeId];
+  const oppId = isHome ? m.awayId : m.homeId;
+  const them = teamMap[teamId], opp = teamMap[oppId];
   if (!them || !opp) return '';
   const gf = isHome ? m.homeGoals : m.awayGoals;
   const ga = isHome ? m.awayGoals : m.homeGoals;
   const st = m.stats;
   const shape = m.formations && m.formations[teamId];
-  const oppShape = m.formations && m.formations[isHome ? m.awayId : m.homeId];
+  const oppShape = m.formations && m.formations[oppId];
 
-  const rows = st ? st.labels.map((lab, i) => {
-    const mine  = isHome ? st.home[i] : st.away[i];
-    const other = isHome ? st.away[i] : st.home[i];
-    if (mine == null && other == null) return '';
-    const a = Number(mine || 0), b = Number(other || 0);
-    const pct = (a + b) ? (a / (a + b)) * 100 : 50;
-    return `<tr>
-      <td style="text-align:right;width:60px"><strong>${mine ?? '–'}</strong></td>
-      <td style="width:46%">
-        <div class="lvs-bar"><div class="lvs-fill" style="width:${pct.toFixed(0)}%"></div></div>
-      </td>
-      <td class="pr-dim" style="text-align:left;width:60px">${other ?? '–'}</td>
-      <td class="pr-dim" style="text-align:left;font-size:0.68rem">${lab}</td>
-    </tr>`;
-  }).join('') : '';
+  // Mine-first ordering, same shared renderer everyone else uses — this
+  // panel used to build its bars by hand and never accounted for PPDA
+  // reading backwards, which every other stat table already did.
+  const rows = st
+    ? _statBarRows(st.labels, isHome ? st.home : st.away, isHome ? st.away : st.home, STAT_INVERT)
+    : '';
+  const lineups = _lineupToggleHTML(teamId, oppId, m.lineup);
 
   return `
-    <div class="lvs-panel">
+    <div class="lvs-panel lvs-live">
       <div class="lvs-head">
         <span class="lv-dot"></span>
         <strong>Playing now</strong>
@@ -4180,6 +4269,7 @@ function _scoutLivePanel(teamId) {
         ${oppShape ? `<span class="fm-chip" style="opacity:0.6">v ${oppShape}</span>` : ''}
       </div>
       ${rows ? `<table class="pr-tbl lvs-tbl"><tbody>${rows}</tbody></table>` : ''}
+      ${lineups}
       <div class="lvs-note">
         Provisional and not saved anywhere. Mid-match numbers describe the state of
         the game as much as the team — a side protecting a lead concedes possession
@@ -4756,6 +4846,42 @@ let _mdData = null;
 const MD_EXTRA_STATS = ['Shots in box', 'Big chances', 'Crosses', 'Passes', 'Tackles', 'Clearances'];
 const MD_EVENT_ICON  = { goal: '⚽', yellow: '🟨', red: '🟥' };
 
+// A starting-XI reveal, shared by full-time and live cards. Collapsed by
+// default and behind a click — eleven names a side, twice over, on a page
+// that can show ten cards is a wall of text nobody asked to read by default,
+// but it is exactly the kind of thing worth one click away rather than not
+// built at all.
+let _lineupSeq = 0;
+
+function _lineupTeamHTML(teamId, rows) {
+  const t = teamMap[teamId];
+  if (!t || !rows || !rows.length) return '';
+  return `<div class="md-lineup-team">
+    <div class="md-lineup-name" style="color:${t.col}">${t.short}</div>
+    ${rows.map(row => `<div class="md-lineup-row">${row.map(name =>
+      `<span class="md-chip" style="border-color:${t.col}">${name}</span>`).join('')}</div>`).join('')}
+  </div>`;
+}
+
+function _lineupToggleHTML(homeId, awayId, lineup) {
+  if (!lineup || (!lineup[homeId] && !lineup[awayId])) return '';
+  const uid = `lnp-${_lineupSeq++}`;
+  return `<div class="md-lineup-wrap">
+    <button class="md-lineup-btn" onclick="_toggleLineup('${uid}', this)">Lineups ▾</button>
+    <div class="md-lineup-body" id="${uid}">
+      ${_lineupTeamHTML(homeId, lineup[homeId])}
+      ${_lineupTeamHTML(awayId, lineup[awayId])}
+    </div>
+  </div>`;
+}
+
+function _toggleLineup(id, btn) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const open = el.classList.toggle('open');
+  btn.textContent = open ? 'Lineups ▴' : 'Lineups ▾';
+}
+
 function _matchDetailHTML(homeId, awayId) {
   const d = _mdData && _mdData[`${homeId}:${awayId}`];
   if (!d) return '';
@@ -4770,20 +4896,15 @@ function _matchDetailHTML(homeId, awayId) {
         </span>`).join('')}</div>`
     : '';
 
-  const st = d.stats;
-  const idx = st ? MD_EXTRA_STATS.map(lab => st.labels.indexOf(lab)).filter(i => i >= 0) : [];
-  const rows = idx.map(i => {
-    const hv = st.home[i], av = st.away[i];
-    if (hv == null && av == null) return '';
-    const x = Number(hv || 0), y = Number(av || 0);
-    const pct = (x + y) ? (x / (x + y)) * 100 : 50;
-    return `<tr>
-      <td style="text-align:right;width:15%"><strong>${hv ?? '–'}</strong></td>
-      <td style="width:44%"><div class="lvs-bar"><div class="lvs-fill" style="width:${pct.toFixed(0)}%"></div></div></td>
-      <td class="pr-dim" style="text-align:left;width:15%">${av ?? '–'}</td>
-      <td class="pr-dim" style="text-align:left;font-size:0.64rem">${st.labels[i]}</td>
-    </tr>`;
-  }).join('');
+  // Everything here comes from the ONE source — Newcache's own per-match Opta
+  // block — so this is the only stat table on the card. It used to sit beside
+  // _matchStatsHTML's older 7-stat panel, which read a different source and
+  // could disagree with it by a point or two; fullTimeHTML now shows one or
+  // the other, never both.
+  const st   = d.stats;
+  const rows = st ? _statBarRows(st.labels, st.home, st.away, STAT_INVERT) : '';
+
+  const lineups = _lineupToggleHTML(homeId, awayId, d.lineup);
 
   if (!hf && !af && !timeline && !rows) return '';
   return `<div class="md-panel">
@@ -4793,6 +4914,7 @@ function _matchDetailHTML(homeId, awayId) {
     </div>` : ''}
     ${timeline}
     ${rows ? `<table class="pr-tbl lvs-tbl" style="margin-top:6px"><tbody>${rows}</tbody></table>` : ''}
+    ${lineups}
   </div>`;
 }
 
@@ -4822,38 +4944,19 @@ function _liveFor(homeId, awayId) {
   return _liveData.find(m => m.homeId === homeId && m.awayId === awayId) || null;
 }
 
-// A compact version of the Scout live panel, framed as home vs away rather
-// than "my team vs opponent" since a fixture card has no team of its own.
-// Trimmed from Scout's eleven stats to these seven — up to ten cards can be
-// on screen in one matchweek, though only 0-3 are ever live at once. Crosses
-// and touches in the box are kept in deliberately: they are the two numbers
-// this project has spent the most time on for exactly this reason — a low
-// block shows up in them live, not just in the final box score.
-const MW_LIVE_STATS = ['Possession %', 'Shots', 'On target', 'Big chances',
-                       'Crosses', 'Touches in box', 'Corners'];
-
 function _liveFixtureBody(m) {
   const h = teamMap[m.homeId], a = teamMap[m.awayId];
   const homeShape = m.formations && m.formations[m.homeId];
   const awayShape = m.formations && m.formations[m.awayId];
   const st = m.stats;
-  const idx = st ? MW_LIVE_STATS.map(lab => st.labels.indexOf(lab)).filter(i => i >= 0) : [];
-
-  const rows = idx.map(i => {
-    const hv = st.home[i], av = st.away[i];
-    if (hv == null && av == null) return '';
-    const x = Number(hv || 0), y = Number(av || 0);
-    const pct = (x + y) ? (x / (x + y)) * 100 : 50;
-    return `<tr>
-      <td style="text-align:right;width:15%"><strong>${hv ?? '–'}</strong></td>
-      <td style="width:44%"><div class="lvs-bar"><div class="lvs-fill" style="width:${pct.toFixed(0)}%"></div></div></td>
-      <td class="pr-dim" style="text-align:left;width:15%">${av ?? '–'}</td>
-      <td class="pr-dim" style="text-align:left;font-size:0.64rem">${st.labels[i]}</td>
-    </tr>`;
-  }).join('');
+  // Every stat MATCH_STATS knows, same set a full-time card shows — a live
+  // match is the one card on the page actually worth lingering on, so it gets
+  // no less detail than the finished ones do.
+  const rows = st ? _statBarRows(st.labels, st.home, st.away, STAT_INVERT) : '';
+  const lineups = _lineupToggleHTML(m.homeId, m.awayId, m.lineup);
 
   return `
-    <div class="lvs-panel" style="margin:10px 0 0">
+    <div class="lvs-panel lvs-live" style="margin:10px 0 0">
       <div class="lvs-head" style="font-size:0.72rem">
         <span class="lv-dot"></span><strong>Live</strong>
         <span class="lv-clock">${m.clock || ''}</span>
@@ -4861,6 +4964,7 @@ function _liveFixtureBody(m) {
         ${awayShape ? `<span class="fm-chip" style="opacity:0.6">v ${awayShape}</span>` : ''}
       </div>
       ${rows ? `<table class="pr-tbl lvs-tbl"><tbody>${rows}</tbody></table>` : ''}
+      ${lineups}
     </div>`;
 }
 
