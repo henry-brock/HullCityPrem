@@ -142,6 +142,36 @@
     .spinner { display:inline-block; width:16px; height:16px; border:2px solid rgba(255,255,255,.2); border-top-color:#F5A12D; border-radius:50%; animation:spin .7s linear infinite; vertical-align:middle; }
     .skeleton { background:linear-gradient(90deg, rgba(255,255,255,.04) 25%, rgba(255,255,255,.10) 50%, rgba(255,255,255,.04) 75%); background-size:800px 100%; animation:shimmer 1.4s infinite; border-radius:6px; }
     .countup { font-variant-numeric: tabular-nums; }
+
+    /* Loading skeletons — .skeleton/.shimmer already existed and were never
+       used; every tab's first-visit "Loading…" text becomes one of these. */
+    .sk-wrap  { padding: 26px 20px; }
+    .sk-label { font-size: 0.72rem; color: var(--text-secondary); margin-bottom: 14px; }
+    .sk-bar   { height: 14px; margin-bottom: 10px; animation: shimmer 1.4s infinite, cardIn .35s ease backwards; }
+
+    /* Row-entrance stagger for any list/table body — applied broadly across
+       tabs (see .stagger usage) rather than each render function hand-rolling
+       its own per-row delay the way the matchweek grid still does. Delay
+       growth is capped at 16 rows so a 300-player pool does not take seconds
+       to finish appearing. */
+    .stagger > * { animation: cardIn 0.3s cubic-bezier(.16,1,.3,1) backwards; }
+    .stagger > *:nth-child(1) { animation-delay: 0ms; }
+    .stagger > *:nth-child(2) { animation-delay: 16ms; }
+    .stagger > *:nth-child(3) { animation-delay: 32ms; }
+    .stagger > *:nth-child(4) { animation-delay: 48ms; }
+    .stagger > *:nth-child(5) { animation-delay: 64ms; }
+    .stagger > *:nth-child(6) { animation-delay: 80ms; }
+    .stagger > *:nth-child(7) { animation-delay: 96ms; }
+    .stagger > *:nth-child(8) { animation-delay: 112ms; }
+    .stagger > *:nth-child(9) { animation-delay: 128ms; }
+    .stagger > *:nth-child(10) { animation-delay: 144ms; }
+    .stagger > *:nth-child(11) { animation-delay: 160ms; }
+    .stagger > *:nth-child(12) { animation-delay: 176ms; }
+    .stagger > *:nth-child(13) { animation-delay: 192ms; }
+    .stagger > *:nth-child(14) { animation-delay: 208ms; }
+    .stagger > *:nth-child(15) { animation-delay: 224ms; }
+    .stagger > *:nth-child(16) { animation-delay: 240ms; }
+    .stagger > *:nth-child(n+17) { animation-delay: 240ms; }
     /* ─── DASHBOARD ─── */
     .dash-grid { display:grid; grid-template-columns: 1.1fr 1fr; gap:16px; }
     @media (max-width:760px){ .dash-grid { grid-template-columns:1fr; } }
@@ -1033,7 +1063,9 @@
     .md-chip {
       font-size: 0.66rem; padding: 2px 8px; border-radius: 10px; border: 1px solid;
       background: rgba(255,255,255,0.04); white-space: nowrap;
+      transition: background 0.15s ease, transform 0.12s ease;
     }
+    .md-chip:hover { background: rgba(255,255,255,0.10); transform: scale(1.06); }
 
     /* ── flair: card entrance, live glow, score pop ── */
     @keyframes cardIn {
@@ -1337,7 +1369,9 @@
       display: inline-block; margin: 1px 3px 1px 0; padding: 1px 6px;
       border-radius: 3px; font-size: 0.66rem; font-variant-numeric: tabular-nums;
       background: rgba(255,255,255,0.06); color: var(--text-secondary);
+      transition: background 0.15s ease, transform 0.15s ease;
     }
+    .fm-chip:hover { background: rgba(255,255,255,0.12); transform: translateY(-1px); }
     .pr-hybrid {
       display: inline-block; margin-left: 6px; padding: 1px 5px; border-radius: 3px;
       font-size: 0.55rem; font-weight: 700; letter-spacing: 0.04em;
@@ -1363,7 +1397,11 @@
     }
     @keyframes lvpulse { 0%,100% { opacity: 1 } 50% { opacity: 0.25 } }
     .lv-clock { color: #dc143c; font-weight: 700; font-size: 0.68rem; }
-    .lv-crest { width: 15px; height: 15px; display: inline-block; vertical-align: -3px; }
+    .lv-crest {
+      width: 15px; height: 15px; display: inline-block; vertical-align: -3px;
+      transition: transform 0.15s ease;
+    }
+    .lv-match:hover .lv-crest { transform: scale(1.2); }
     tr.lv-row td { box-shadow: inset 3px 0 0 #dc143c; }
     .lv-delta { font-size: 0.62rem; margin-left: 5px; font-weight: 700; }
     .lvs-panel {
@@ -1721,7 +1759,7 @@
               <th>Form</th>
             </tr>
           </thead>
-          <tbody id="table-body"></tbody>
+          <tbody id="table-body" class="stagger"></tbody>
         </table>
       </div>
     </div>
@@ -1796,7 +1834,7 @@
         <span class="card-title" id="sc-title">Opponent Scout</span>
         <span id="sc-meta" style="font-size:0.75rem;color:var(--text-secondary)"></span>
       </div>
-      <div id="sc-body"><div class="sa-empty">Loading scout report…</div></div>
+      <div id="sc-body"><div class="sk-wrap"><div class="sk-label">Loading scout report…</div><div class="skeleton sk-bar" style="width:88%;animation-delay:0ms,0ms"></div><div class="skeleton sk-bar" style="width:74%;animation-delay:70ms,70ms"></div><div class="skeleton sk-bar" style="width:82%;animation-delay:140ms,140ms"></div><div class="skeleton sk-bar" style="width:60%;animation-delay:210ms,210ms"></div></div></div>
     </div>
   </section>
 
@@ -1876,7 +1914,7 @@
               <th class="c">GD</th><th class="c">Pts</th><th>Form</th>
             </tr>
           </thead>
-          <tbody id="sim-table-body"></tbody>
+          <tbody id="sim-table-body" class="stagger"></tbody>
         </table>
       </div>
     </div>
@@ -2082,7 +2120,7 @@
         <button class="sa-btn" data-pos="F" onclick="saFilter('champ','F')">FWD</button>
       </div>
       <div style="overflow-x:auto">
-        <table class="sa-tbl" id="sa-champ-tbl"><thead id="sa-champ-thead"></thead><tbody id="sa-champ-tbody"></tbody></table>
+        <table class="sa-tbl" id="sa-champ-tbl"><thead id="sa-champ-thead"></thead><tbody id="sa-champ-tbody" class="stagger"></tbody></table>
         <div class="sa-empty" id="sa-champ-empty">Loading Championship player data…</div>
       </div>
     </div>
@@ -2097,7 +2135,7 @@
       </div>
       <div class="pr-note" id="styles-note" style="margin:0 16px 12px"></div>
       <div style="overflow-x:auto">
-        <table class="sa-tbl" id="styles-tbl"><thead id="styles-thead"></thead><tbody id="styles-tbody"></tbody></table>
+        <table class="sa-tbl" id="styles-tbl"><thead id="styles-thead"></thead><tbody id="styles-tbody" class="stagger"></tbody></table>
         <div class="sa-empty" id="styles-empty">Loading style data…</div>
       </div>
     </div>
@@ -2110,7 +2148,7 @@
         <span class="card-title" style="color:#F5A12D">Formations — what each side lines up in</span>
         <span id="fm-meta" style="font-size:0.72rem;color:var(--text-secondary)"></span>
       </div>
-      <div id="fm-body"><div class="sa-empty">Loading formations…</div></div>
+      <div id="fm-body"><div class="sk-wrap"><div class="sk-label">Loading formations…</div><div class="skeleton sk-bar" style="width:88%;animation-delay:0ms,0ms"></div><div class="skeleton sk-bar" style="width:74%;animation-delay:70ms,70ms"></div><div class="skeleton sk-bar" style="width:82%;animation-delay:140ms,140ms"></div><div class="skeleton sk-bar" style="width:60%;animation-delay:210ms,210ms"></div></div></div>
     </div>
   </section>
 
@@ -2123,7 +2161,7 @@
         <span class="card-title">Rival Tracker — the teams Hull are actually racing</span>
         <span id="rv-meta" style="font-size:0.75rem;color:var(--text-secondary)"></span>
       </div>
-      <div id="rv-body"><div class="sa-empty">Loading…</div></div>
+      <div id="rv-body"><div class="sk-wrap"><div class="sk-label">Loading…</div><div class="skeleton sk-bar" style="width:88%;animation-delay:0ms,0ms"></div><div class="skeleton sk-bar" style="width:74%;animation-delay:70ms,70ms"></div><div class="skeleton sk-bar" style="width:82%;animation-delay:140ms,140ms"></div><div class="skeleton sk-bar" style="width:60%;animation-delay:210ms,210ms"></div></div></div>
     </div>
   </section>
 
@@ -2223,7 +2261,7 @@
         </label>
         <button class="ft-btn" onclick="loadTeamStats(true)">↻ Refresh</button>
       </div>
-      <div id="ts-body"><div class="sa-empty">Loading team stats…</div></div>
+      <div id="ts-body"><div class="sk-wrap"><div class="sk-label">Loading team stats…</div><div class="skeleton sk-bar" style="width:88%;animation-delay:0ms,0ms"></div><div class="skeleton sk-bar" style="width:74%;animation-delay:70ms,70ms"></div><div class="skeleton sk-bar" style="width:82%;animation-delay:140ms,140ms"></div><div class="skeleton sk-bar" style="width:60%;animation-delay:210ms,210ms"></div></div></div>
     </div>
   </section>
 
@@ -2234,7 +2272,7 @@
         <span class="card-title">Derived Stats — ratios the raw counts hide</span>
         <span id="dv-meta" style="font-size:0.75rem;color:var(--text-secondary)"></span>
       </div>
-      <div id="dv-body"><div class="sa-empty">Loading derived stats…</div></div>
+      <div id="dv-body"><div class="sk-wrap"><div class="sk-label">Loading derived stats…</div><div class="skeleton sk-bar" style="width:88%;animation-delay:0ms,0ms"></div><div class="skeleton sk-bar" style="width:74%;animation-delay:70ms,70ms"></div><div class="skeleton sk-bar" style="width:82%;animation-delay:140ms,140ms"></div><div class="skeleton sk-bar" style="width:60%;animation-delay:210ms,210ms"></div></div></div>
     </div>
   </section>
 
@@ -2264,7 +2302,7 @@
         <button class="sa-btn" data-pos="F" onclick="saFilter('pl','F')">FWD</button>
       </div>
       <div style="overflow-x:auto">
-        <table class="sa-tbl" id="sa-pl-tbl"><thead id="sa-pl-thead"></thead><tbody id="sa-pl-tbody"></tbody></table>
+        <table class="sa-tbl" id="sa-pl-tbl"><thead id="sa-pl-thead"></thead><tbody id="sa-pl-tbody" class="stagger"></tbody></table>
         <div class="sa-empty" id="sa-pl-empty">Season hasn't started yet — player stats will populate once 2026/27 PL data is available.</div>
       </div>
     </div>
@@ -2275,7 +2313,7 @@
         <span class="card-title" style="color:#F5A12D">Player Rater — vs Premier League positional peers</span>
         <span id="pr-meta" style="font-size:0.72rem;color:var(--text-secondary)"></span>
       </div>
-      <div id="pr-body"><div class="sa-empty">Loading player ratings…</div></div>
+      <div id="pr-body"><div class="sk-wrap"><div class="sk-label">Loading player ratings…</div><div class="skeleton sk-bar" style="width:88%;animation-delay:0ms,0ms"></div><div class="skeleton sk-bar" style="width:74%;animation-delay:70ms,70ms"></div><div class="skeleton sk-bar" style="width:82%;animation-delay:140ms,140ms"></div><div class="skeleton sk-bar" style="width:60%;animation-delay:210ms,210ms"></div></div></div>
     </div>
 
     <!-- ═══ PER-OPPORTUNITY PLAYER STATS ═══ -->
@@ -2284,7 +2322,7 @@
         <span class="card-title" style="color:#F5A12D">Per-Opportunity Stats — what each player did with their involvement</span>
         <span id="pd-meta" style="font-size:0.72rem;color:var(--text-secondary)"></span>
       </div>
-      <div id="pd-body"><div class="sa-empty">Loading…</div></div>
+      <div id="pd-body"><div class="sk-wrap"><div class="sk-label">Loading…</div><div class="skeleton sk-bar" style="width:88%;animation-delay:0ms,0ms"></div><div class="skeleton sk-bar" style="width:74%;animation-delay:70ms,70ms"></div><div class="skeleton sk-bar" style="width:82%;animation-delay:140ms,140ms"></div><div class="skeleton sk-bar" style="width:60%;animation-delay:210ms,210ms"></div></div></div>
     </div>
   </section>
 
@@ -2295,7 +2333,7 @@
         <span class="card-title" style="color:#F5A12D">League Leaders — best rated player in each position</span>
         <span id="lb-meta" style="font-size:0.72rem;color:var(--text-secondary)"></span>
       </div>
-      <div id="lb-body"><div class="sa-empty">Loading league leaders…</div></div>
+      <div id="lb-body"><div class="sk-wrap"><div class="sk-label">Loading league leaders…</div><div class="skeleton sk-bar" style="width:88%;animation-delay:0ms,0ms"></div><div class="skeleton sk-bar" style="width:74%;animation-delay:70ms,70ms"></div><div class="skeleton sk-bar" style="width:82%;animation-delay:140ms,140ms"></div><div class="skeleton sk-bar" style="width:60%;animation-delay:210ms,210ms"></div></div></div>
     </div>
   </section>
 
@@ -3498,7 +3536,7 @@ function _matchStatsHTML(r) {
   const home   = rows.map(x => x[1]);
   const away   = rows.map(x => x[2]);
   return `<table class="pr-tbl lvs-tbl" style="margin-top:8px">
-    <tbody>${_statBarRows(labels, home, away, STAT_INVERT)}</tbody></table>`;
+    <tbody class="stagger">${_statBarRows(labels, home, away, STAT_INVERT)}</tbody></table>`;
 }
 
 // How this result moved each side's attack/defence rating — i.e. what the
@@ -3771,7 +3809,7 @@ function renderPlayerDerived() {
         <th style="text-align:left">Player</th><th>Pos</th><th>Mins</th>
         ${metrics.map(m => `<th${m.neg ? ' title="lower is better"' : ''}>${m.name}${m.neg ? ' ↓' : ''}</th>`).join('')}
       </tr></thead>
-      <tbody>
+      <tbody class="stagger">
         ${d.players.map(p => `
           <tr>
             <td style="text-align:left"><span class="pr-shirt">${p.shirt ?? '–'}</span>${p.name}</td>
@@ -3827,7 +3865,7 @@ function renderPlayerRater() {
             <th title="Rank among qualified Premier League players in this position, and the percentile against every peer with minutes">In league</th>
             ${cols.map(c => `<th title="${negSet.has(c) ? c + ' — fewer is better, already inverted' : c}">${c}${negSet.has(c) ? ' ↓' : ''}</th>`).join('')}
           </tr></thead>
-          <tbody>
+          <tbody class="stagger">
             ${rows.map(p => `
               <tr>
                 <td style="text-align:left">
@@ -3885,7 +3923,7 @@ let _fmData = null;
 async function loadFormations(force) {
   const body = document.getElementById('fm-body');
   if (_fmData && !force) { renderFormations(); return; }
-  body.innerHTML = `<div class="sa-empty">Loading formations…</div>`;
+  body.innerHTML = _skeletonBlock('Loading formations…');
   try {
     _fmData = await (await fetch('/api/formations?season=2627')).json();
   } catch (e) {
@@ -3943,7 +3981,7 @@ function renderFormations() {
           <th style="text-align:left">Shapes used</th>
           <th style="text-align:left">Shapes faced</th>
         </tr></thead>
-        <tbody>
+        <tbody class="stagger">
           ${rows.map(r => `
             <tr style="${r.id === 'hull' ? 'background:rgba(245,161,45,0.10)' : ''}">
               <td style="text-align:left">
@@ -4036,7 +4074,7 @@ function renderLeaders() {
             <th title="Form pulled toward 50 by how little has been seen — this is what the table is ranked on">Score</th>
             <th title="How much of a full season's evidence this is based on">Conf</th>
           </tr></thead>
-          <tbody>
+          <tbody class="stagger">
             ${rows.map(r => line(r, false)).join('')}
             ${extra ? `<tr class="lb-gap"><td colspan="6">Hull's best ${PR_POS_NAME[pos].toLowerCase().replace(/s$/, '')}</td></tr>${line(extra, false)}` : ''}
           </tbody>
@@ -4135,7 +4173,7 @@ function renderRivals() {
           <th style="text-align:left">Team</th><th>Pl</th><th>Pts</th><th>GD</th><th>Form</th>
           <th>Run-in</th><th>6-pointers left</th>${rel ? '<th>Relegation %</th>' : ''}
         </tr></thead>
-        <tbody>
+        <tbody class="stagger">
           ${rivals.map(r => {
             const d = runIn(r.id);
             const norm = d && hi > lo ? (d.avg - lo) / (hi - lo) : 0.5;
@@ -4268,7 +4306,7 @@ function _scoutLivePanel(teamId) {
         ${shape ? `<span class="fm-chip">${shape}</span>` : ''}
         ${oppShape ? `<span class="fm-chip" style="opacity:0.6">v ${oppShape}</span>` : ''}
       </div>
-      ${rows ? `<table class="pr-tbl lvs-tbl"><tbody>${rows}</tbody></table>` : ''}
+      ${rows ? `<table class="pr-tbl lvs-tbl"><tbody class="stagger">${rows}</tbody></table>` : ''}
       ${lineups}
       <div class="lvs-note">
         Provisional and not saved anywhere. Mid-match numbers describe the state of
@@ -4509,7 +4547,7 @@ function renderAccuracy() {
       <div class="dv-sec-h">Calibration — when it says X%, does X% happen?</div>
       <table class="pr-tbl" style="max-width:620px">
         <thead><tr><th style="text-align:left">Forecast band</th><th>Predictions</th><th>Said</th><th>Happened</th><th>Gap</th></tr></thead>
-        <tbody>
+        <tbody class="stagger">
           ${cal.filter(b => b.n).map(b => {
             const said = b.pred / b.n * 100, got = b.hit / b.n * 100, gap = got - said;
             // A band holding a handful of forecasts can only land on 0% or
@@ -4530,7 +4568,7 @@ function renderAccuracy() {
       <div class="dv-sec-h">Biggest surprises</div>
       <table class="pr-tbl" style="max-width:620px">
         <thead><tr><th style="text-align:left">Match</th><th>MW</th><th>Result</th><th>Model gave it</th></tr></thead>
-        <tbody>
+        <tbody class="stagger">
           ${surprises.map(x => `<tr>
             <td style="text-align:left">${nm(x.r.homeId)} v ${nm(x.r.awayId)}</td>
             <td class="pr-dim">${x.mw}</td>
@@ -4543,7 +4581,7 @@ function renderAccuracy() {
       <div class="dv-sec-h">Where the priors look wrong <span>points above/below what the model expected</span></div>
       <table class="pr-tbl" style="max-width:620px">
         <thead><tr><th style="text-align:left">Over-performing</th><th>pts vs expected</th><th style="text-align:left">Under-performing</th><th>pts vs expected</th></tr></thead>
-        <tbody>
+        <tbody class="stagger">
           ${biasRows.slice(0, 5).map((hi, i) => {
             const lo = biasRows[biasRows.length - 1 - i];
             return `<tr>
@@ -4641,7 +4679,7 @@ function renderDerived() {
       </div>
       ${groups.map(g => `
         <div class="dv-sec-h">${g}</div>
-        <div class="dv-grid">${metrics.filter(m => m.group === g).map(card).join('')}</div>
+        <div class="dv-grid stagger">${metrics.filter(m => m.group === g).map(card).join('')}</div>
       `).join('')}
     </div>`;
 }
@@ -4707,7 +4745,7 @@ function _tsLabel(k) {
 async function loadTeamStats(force) {
   const body = document.getElementById('ts-body');
   if (_tsData && !force) { renderTeamStats(); return; }
-  body.innerHTML = `<div class="sa-empty">Loading team stats from Pulse…</div>`;
+  body.innerHTML = _skeletonBlock('Loading team stats from Pulse…');
   try {
     const res = await fetch(`/api/teamstats?season=2627&refresh=${force ? 1 : 1}`);
     _tsData = await res.json();
@@ -4817,10 +4855,10 @@ function renderTeamStats() {
       ${warn}
       <div class="ts-sec-h">${hullHead} <span>(${hullTop.length || 'none yet'}${hullTop.length ? ` stat${hullTop.length === 1 ? '' : 's'}` : ''})</span></div>
       ${scopeNote}
-      ${hullTop.length ? `<div class="ts-grid">${hullTop.map(card).join('')}</div>` : ''}
+      ${hullTop.length ? `<div class="ts-grid stagger">${hullTop.map(card).join('')}</div>` : ''}
       ${hullOnly ? '' : `
         <div class="ts-sec-h" style="margin-top:26px">All other stats <span>(${rest.length})</span></div>
-        <div class="ts-grid">${rest.map(card).join('')}</div>`}
+        <div class="ts-grid stagger">${rest.map(card).join('')}</div>`}
     </div>`;
 }
 
@@ -4913,7 +4951,7 @@ function _matchDetailHTML(homeId, awayId) {
       ${af ? `<span class="fm-chip">${a.short} ${af}</span>` : ''}
     </div>` : ''}
     ${timeline}
-    ${rows ? `<table class="pr-tbl lvs-tbl" style="margin-top:6px"><tbody>${rows}</tbody></table>` : ''}
+    ${rows ? `<table class="pr-tbl lvs-tbl" style="margin-top:6px"><tbody class="stagger">${rows}</tbody></table>` : ''}
     ${lineups}
   </div>`;
 }
@@ -4963,7 +5001,7 @@ function _liveFixtureBody(m) {
         ${homeShape ? `<span class="fm-chip">${homeShape}</span>` : ''}
         ${awayShape ? `<span class="fm-chip" style="opacity:0.6">v ${awayShape}</span>` : ''}
       </div>
-      ${rows ? `<table class="pr-tbl lvs-tbl"><tbody>${rows}</tbody></table>` : ''}
+      ${rows ? `<table class="pr-tbl lvs-tbl"><tbody class="stagger">${rows}</tbody></table>` : ''}
       ${lineups}
     </div>`;
 }
@@ -5297,7 +5335,7 @@ function drawChaosTable() {
       </div>
       <div style="overflow-x:auto"><table class="pr-tbl" style="max-width:640px">
         <thead><tr><th>#</th><th style="text-align:left">Team</th><th>Pts</th><th>W-D-L</th><th>GD</th><th>Expected</th><th>Δ</th></tr></thead>
-        <tbody>
+        <tbody class="stagger">
           ${c.rows.map((r, i) => {
             const t = teamMap[r.id] || { name: r.id, col: '#555', txt: '#fff' };
             const e = exp[r.id] ?? i;
@@ -5734,7 +5772,7 @@ function drawProjectedFinish(stat) {
       <th style="text-align:left">#</th><th style="text-align:left">Club</th>
       <th>xPts</th><th>90% range</th><th>Most likely</th>
       <th style="text-align:left">Finishing position (1 → 20)</th>
-    </tr></thead><tbody>
+    </tr></thead><tbody class="stagger">
     ${rows.map((r, i) => {
       const t = r.team;
       return `<tr class="${t.id==='hull'?'hull-row':''}">
@@ -5799,7 +5837,7 @@ function drawRunIn() {
   };
   wrap.innerHTML = `<div class="odds-wrap"><table class="runin-tbl">
     <thead><tr><th style="text-align:left">Club</th><th>Games left</th><th>Home</th><th>Away</th><th>Avg opp strength</th></tr></thead>
-    <tbody>${rows.map(r => `<tr class="${r.team.id==='hull'?'hull-row':''}">
+    <tbody class="stagger">${rows.map(r => `<tr class="${r.team.id==='hull'?'hull-row':''}">
       <td><div style="display:flex;align-items:center;gap:7px">
         <div class="badge" style="background:${r.team.col};color:${r.team.txt};width:20px;height:20px;font-size:0.5rem;flex-shrink:0;${_crest(r.team.id)}"></div>${r.team.name}
       </div></td>
@@ -5830,7 +5868,7 @@ function drawLeagueOddsTable(data) {
           <th style="color:#ffd700">UECL (8th)</th>
           <th style="color:#ff6060">REL (18–20)</th>
         </tr></thead>
-        <tbody>
+        <tbody class="stagger">
           ${data.map(d => {
             const t = d.team;
             return `<tr class="${t.id==='hull'?'hull-row':''}">
@@ -5970,6 +6008,19 @@ function resetAll() {
 // TOAST
 // ═══════════════════════════════════════════════════
 let toastTimer;
+// A shimmering placeholder for a tab's first load, in place of static
+// "Loading…" text. .skeleton/@keyframes shimmer already existed in the CSS
+// and were never actually used anywhere.
+function _skeletonBlock(label, rows = 4) {
+  const widths = [92, 78, 85, 65, 72, 58];
+  return `<div class="sk-wrap">
+    ${label ? `<div class="sk-label">${label}</div>` : ''}
+    ${Array.from({ length: rows }, (_, i) =>
+      `<div class="skeleton sk-bar" style="width:${widths[i % widths.length]}%;animation-delay:${i * 70}ms,${i * 70}ms"></div>`
+    ).join('')}
+  </div>`;
+}
+
 function toast(msg) {
   const el = document.getElementById('toast');
   el.textContent = msg;
@@ -6516,7 +6567,7 @@ function saReliance() {
   const concClass = top3 >= 55 ? 'color:#ff8080' : 'color:#F5A12D';
 
   body.innerHTML = `
-    <div class="rel-grid">
+    <div class="rel-grid stagger">
       <div class="rel-stat">
         <div class="rel-stat-val">${totalG}</div>
         <div class="rel-stat-lbl">Goals scored</div>
@@ -7024,7 +7075,7 @@ function renderSurvival() {
     ${hullPanel}
     ${fixtures.length ? `<div class="odds-wrap"><table class="surv-tbl">
       <thead><tr><th>Fixture</th><th>Best for Hull</th><th>Worst to avoid</th>
-        <th>Survival range</th></tr></thead><tbody>
+        <th>Survival range</th></tr></thead><tbody class="stagger">
       ${fixtures.map(fx => {
         const tags = _rivalTag(fx.f.homeId, std, res.hullPts) + _rivalTag(fx.f.awayId, std, res.hullPts);
         return `<tr class="${fx.hull ? 'hull-row' : ''}">
@@ -7071,7 +7122,7 @@ function renderRunin(res, std) {
   const projCol = proj >= line ? '#00ff85' : '#ff6060';
   wrap.innerHTML = `<div class="odds-wrap"><table class="surv-tbl">
     <thead><tr><th>MW</th><th>Opponent</th><th>Win</th><th>Draw</th><th>Loss</th><th>xPts</th></tr></thead>
-    <tbody>${rows}</tbody></table>
+    <tbody class="stagger">${rows}</tbody></table>
     <div style="padding:10px 12px;font-size:0.8rem">
       Projected final: <strong style="color:${projCol}">${Math.round(proj)} pts</strong>
       (${res.hullPts} now + ${xptsSum.toFixed(1)} expected) vs the ${line}-pt safety line (75th pct)
@@ -7090,7 +7141,7 @@ function renderKeyGames(res) {
   if (!games.length) { wrap.innerHTML = '<div class="sa-empty">No fixtures left.</div>'; return; }
   const maxLev = games[0].leverage || 1;
   wrap.innerHTML = `<div class="odds-wrap"><table class="surv-tbl">
-    <thead><tr><th>MW</th><th>Fixture</th><th>Best for Hull</th><th>Swing</th></tr></thead><tbody>
+    <thead><tr><th>MW</th><th>Fixture</th><th>Best for Hull</th><th>Swing</th></tr></thead><tbody class="stagger">
     ${games.map(fx => `<tr class="${fx.hull ? 'hull-row' : ''}">
       <td>${mwOf[fx.f.homeId + ':' + fx.f.awayId]}</td>
       <td>${teamMap[fx.f.homeId].name} <span style="color:var(--text-secondary)">v</span> ${teamMap[fx.f.awayId].name}</td>
@@ -7117,7 +7168,7 @@ function renderRelBattle(res, std) {
   if (!rows.length) { wrap.innerHTML = '<div class="sa-empty">No teams in the drop mix.</div>'; return; }
   wrap.innerHTML = `<div class="odds-wrap"><table class="surv-tbl">
     <thead><tr><th>Club</th><th>Pos</th><th>Pts</th><th>Left</th><th>Proj pts</th><th>Relegation %</th></tr></thead>
-    <tbody>${rows.map(r => {
+    <tbody class="stagger">${rows.map(r => {
       const rc = r.rel >= 50 ? '#ff6060' : r.rel >= 25 ? '#ffc107' : '#00ff85';
       return `<tr class="${r.t.id === 'hull' ? 'hull-row' : ''}">
         <td><div style="display:flex;align-items:center;gap:7px"><div class="badge" style="background:${r.t.col};color:${r.t.txt};width:20px;height:20px;font-size:0.5rem;flex-shrink:0;${_crest(r.t.id)}"></div>${r.t.name}</div></td>
@@ -7322,7 +7373,7 @@ function renderXGTable() {
     .filter(r => r.gp > 0).sort((x, y) => y.xgd - x.xgd);
   wrap.innerHTML = `<div class="odds-wrap"><table class="surv-tbl">
     <thead><tr><th>#</th><th>Club</th><th>GP</th><th>GF</th><th>xGF</th><th>GA</th><th>xGA</th><th>xGD</th><th>Over (G−xG)</th></tr></thead>
-    <tbody>${rows.map((r, i) => {
+    <tbody class="stagger">${rows.map((r, i) => {
       const oc = r.over >= 0 ? '#00ff85' : '#ff6060';
       return `<tr class="${r.team.id === 'hull' ? 'hull-row' : ''}">
         <td>${i + 1}</td>
@@ -7450,7 +7501,7 @@ function renderDashboard() {
     .map(r => r ? `<div class="form-pip fp-${r}">${r}</div>` : `<div class="form-pip fp-blank"></div>`).join('');
   const relPct = _survData ? (100 - _survData.baseSurv) : null;
   const stats = `<div class="dash-card"><h3>At a Glance</h3>
-    <div class="dash-stat-grid">
+    <div class="dash-stat-grid stagger">
       <div class="dash-stat"><div class="dash-stat-v" style="color:#fff">${started ? hullRow.pts : 0}</div><div class="dash-stat-l">Points</div></div>
       <div class="dash-stat"><div class="dash-stat-v" style="color:${relPct == null ? '#fff' : relPct >= 50 ? '#ff6060' : '#ffc107'}">${relPct == null ? '—' : relPct.toFixed(0) + '%'}</div><div class="dash-stat-l">Relegation</div></div>
       <div class="dash-stat"><div class="dash-stat-v" style="color:#F5A12D">${_survData ? _survData.safetyLine : '—'}</div><div class="dash-stat-l">Safety line</div></div>
