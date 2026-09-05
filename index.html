@@ -1470,7 +1470,7 @@
     }
 
     /* ── league table FLIP reorder: rows slide to their new spot ── */
-    #table-body tr { transition: transform 0.45s cubic-bezier(.2,.8,.2,1); }
+    #table-body tr { transition: transform 2s cubic-bezier(.2,.8,.2,1); }
 
     /* ── hover coverage: every element type below had zero mouseover feedback ── */
     .card-header { transition: filter 0.15s ease; }
@@ -1519,7 +1519,7 @@
     tr.lv-row td { box-shadow: inset 3px 0 0 #dc143c; }
     .lv-delta {
       font-size: 0.62rem; margin-left: 5px; font-weight: 700; display: inline-block;
-      animation: posBounce 0.4s cubic-bezier(.34,1.56,.64,1);
+      animation: posBounce 2s cubic-bezier(.34,1.56,.64,1);
     }
     @keyframes posBounce {
       0%   { transform: scale(0.4) translateY(-4px); opacity: 0; }
@@ -3143,8 +3143,17 @@ function renderTable() {
   const liveTeams = new Set(live.flatMap(m => [m.homeId, m.awayId]));
   // Where a team would sit without the match currently in progress, so the
   // movement it is causing is visible rather than implied.
-  const settled = live.length
-    ? new Map(buildTable(base).map((r, i) => [r.id, i + 1])) : null;
+  // Where a team would sit, and what its points/GD/zone would be, without
+  // the match currently in progress — the baseline every live-driven
+  // animation (position arrow, cell flash, zone alert) compares against.
+  const settledRows = live.length ? buildTable(base) : null;
+  const settled = settledRows
+    ? new Map(settledRows.map((r, i) => [r.id, i + 1])) : null;
+  const settledStat = settledRows ? new Map(settledRows.map((r, i) => {
+    const p = i + 1;
+    return [r.id, { pts: r.pts, gd: r.gf - r.ga,
+                    zone: p <= 5 ? 'z-cl' : p <= 7 ? 'z-el' : p === 8 ? 'z-cf' : p >= 18 ? 'z-rl' : '' }];
+  })) : null;
   const proj = form ? null : computeAllProjections();
   const tbody = document.getElementById('table-body');
   // FLIP: where every team's row sits right now, before the rebuild throws
@@ -3177,17 +3186,22 @@ function renderTable() {
     const gdStr  = gd > 0 ? `+${gd}` : `${gd}`;
     const gdClass = gd > 0 ? 'gd-pos' : gd < 0 ? 'gd-neg' : 'gd-zero';
 
-    // Change detection against the last REAL render — skipped in form mode
-    // (a different ranking entirely) and skipped for any team a live match
-    // is already flagging, so a team never carries two rival delta arrows.
-    const trackable  = !form && !liveTeams.has(row.id);
-    const prevPos    = trackable ? _prevRealPos.get(row.id)   : undefined;
-    const prevZone   = trackable ? _prevRealZone.get(row.id)  : undefined;
-    const prevStat   = trackable ? _prevRealStats.get(row.id) : undefined;
-    const posMoved   = trackable && prevPos   !== undefined && prevPos   !== pos;
-    const zoneShifted = trackable && prevZone !== undefined && prevZone !== zoneClass;
-    const ptsChanged = trackable && prevStat  !== undefined && prevStat.pts !== row.pts;
-    const gdChanged  = trackable && prevStat  !== undefined && prevStat.gd  !== gd;
+    // Change detection has two baselines depending on what is moving the
+    // team. A live-affected row compares against "where it would be without
+    // the match in progress" (settledStat) — the same comparison the
+    // position arrow already made, extended to cover value and zone too, so
+    // a live goal that pushes a team into the relegation zone gets the same
+    // flash/alert treatment a real result would. Everyone else compares
+    // against the last REAL render. Form mode tracks neither — a different
+    // ranking entirely.
+    const live_ = liveTeams.has(row.id);
+    const prevPos    = form ? undefined : live_ ? settled.get(row.id)      : _prevRealPos.get(row.id);
+    const prevStat   = form ? undefined : live_ ? settledStat.get(row.id)  : _prevRealStats.get(row.id);
+    const prevZone   = form ? undefined : live_ ? (settledStat.get(row.id) || {}).zone : _prevRealZone.get(row.id);
+    const posMoved   = prevPos  !== undefined && prevPos  !== pos && !live_;   // live already shows this via settled below
+    const zoneShifted = prevZone !== undefined && prevZone !== zoneClass;
+    const ptsChanged = prevStat !== undefined && prevStat.pts !== row.pts;
+    const gdChanged  = prevStat !== undefined && prevStat.gd  !== gd;
 
     const tr = document.createElement('tr');
     tr.className = zoneClass + (liveTeams.has(row.id) ? ' lv-row' : '') + (zoneShifted ? ' zone-alert' : '');
@@ -3231,13 +3245,20 @@ function renderTable() {
   // Snapshot this render as the baseline the NEXT one compares against —
   // only meaningful outside form mode, since form's ranking is not the real
   // table and comparing across the two would flag every team every time.
+  // Snapshotting FROM settledRows (not the live-inclusive `rows`) when live
+  // data is present is deliberate: a provisional live score must never
+  // become the "real" baseline, or turning live off again would compare
+  // the genuine table against a snapshot the live match had already
+  // distorted — the same rule the settle window enforces on the backend
+  // caches, applied here to in-memory state instead of a file.
   if (!form) {
-    _prevRealPos   = new Map(rows.map((r, i) => [r.id, i + 1]));
-    _prevRealZone  = new Map(rows.map((r, i) => {
+    const snap = settledRows || rows;
+    _prevRealPos   = new Map(snap.map((r, i) => [r.id, i + 1]));
+    _prevRealZone  = new Map(snap.map((r, i) => {
       const p = i + 1;
       return [r.id, p <= 5 ? 'z-cl' : p <= 7 ? 'z-el' : p === 8 ? 'z-cf' : p >= 18 ? 'z-rl' : ''];
     }));
-    _prevRealStats = new Map(rows.map(r => [r.id, { pts: r.pts, gd: r.gf - r.ga }]));
+    _prevRealStats = new Map(snap.map(r => [r.id, { pts: r.pts, gd: r.gf - r.ga }]));
   }
 
   // FLIP play: set every moved row's offset with transitions off, force one
