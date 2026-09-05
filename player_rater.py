@@ -63,9 +63,14 @@ CONCEPTS_OUT = {
                      "ctx": "def"},
     "Defending":    {"stats": ["totalClearance", "headClearances", "blockedShots",
                                "blockedCrosses", "clearancesPer100Touches"], "ctx": "def"},
-    # Volume AND success rate: how often he contests, and whether he wins.
-    "Duels":        {"stats": ["duelsWon", "aerialsWon",
-                               "duelWinPct", "aerialWinPct"], "ctx": "def"},
+    # Ground and aerial duels, each on volume AND success rate. This used to be
+    # a blended "all duels" pair plus a separate aerial pair, which double
+    # counted aerials inside the blended total rather than genuinely splitting
+    # the two. Fair to both kinds of defender: a full-back who wins his
+    # ground duels but loses in the air, and a target-man-marking centre-back
+    # who is the reverse, should both be able to show it.
+    "Duels":        {"stats": ["groundDuelsWon", "aerialsWon",
+                               "groundDuelWinPct", "aerialWinPct"], "ctx": "def"},
     "Security":     {"stats": ["possLost", "dispossessed", "unsuccessfulTouch",
                                "errorLeadToShot", "fouls", "turnoverRate"],
                      "ctx": "att", "neg": True},
@@ -412,7 +417,7 @@ def _role(player: dict) -> str:
 # Stats already expressed as a rate — must not be divided by minutes again.
 RATE_STATS = {"passPct", "savePct", "tacklePct", "shotPct", "goalConversion",
                "duelWinPct", "aerialWinPct", "turnoverRate", "iboxShare",
-               "clearancesPer100Touches", "ballWinsPer100Touches"}
+               "clearancesPer100Touches", "ballWinsPer100Touches", "groundDuelWinPct"}
 
 
 # Derived per-opportunity rates, injected into every player's stat block.
@@ -440,6 +445,8 @@ DERIVED_RATES = {
                                      (s.get("duelsWon") or 0) + (s.get("duelsLost") or 0)),
     "aerialWinPct": lambda s: _share(s.get("aerialsWon"),
                                      (s.get("aerialsWon") or 0) + (s.get("aerialsLost") or 0)),
+    "groundDuelWinPct": lambda s: _share(s.get("groundDuelsWon"),
+                                         (s.get("groundDuelsWon") or 0) + (s.get("groundDuelsLost") or 0)),
     # Expressed as loss rather than retention so it sits in Security, whose
     # percentiles are inverted; the two are the same measurement.
     "turnoverRate": lambda s: _share(s.get("possLost"), s.get("touches")),
@@ -470,6 +477,13 @@ def _augment(players: list[dict]) -> None:
         st = p.get("stats")
         if not st:
             continue
+        # Opta reports only combined duels (duel_won/lost) and aerial duels
+        # (aerial_won/lost) — aerial is a subset of the combined figure, not a
+        # separate tally, so ground duels have to be derived by subtraction.
+        # A raw count, not a rate, so it goes through the normal per-90 path
+        # rather than RATE_STATS.
+        st["groundDuelsWon"]  = max(0.0, (st.get("duelsWon")  or 0) - (st.get("aerialsWon")  or 0))
+        st["groundDuelsLost"] = max(0.0, (st.get("duelsLost") or 0) - (st.get("aerialsLost") or 0))
         for key, fn in DERIVED_RATES.items():
             st[key] = fn(st)
 
