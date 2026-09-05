@@ -2749,18 +2749,34 @@ async function loadLive() {
   // endpoint drops a request now and then, and clearing on error made the
   // strip blink out mid-match and come back seconds later. Only an explicit,
   // successful empty list retires a match from the display.
+  //
+  // Always asks for detail: the extra stat/formation fetch only happens
+  // server-side per match actually live (0-3 at once), so one feed can serve
+  // the table's score-only strip, Scout's breakdown and Matchweek's cards
+  // instead of each keeping its own poll loop hitting the same endpoint.
   try {
-    const r = await fetch('/api/live');
+    const r = await fetch('/api/live?detail=1');
     const d = await r.json();
     if (r.ok && !d.error) _liveData = d.live || [];
   } catch (e) {
     /* keep the last known state */
   }
   renderLiveStrip();
-  if (_liveInclude) renderTable();
+  _refreshLiveViews();
   // Only poll while something is actually being played.
   clearTimeout(_liveTimer);
   if (_liveData.length) _liveTimer = setTimeout(loadLive, LIVE_POLL_MS);
+}
+
+// Re-render whichever live-aware view is currently on screen. Checked by DOM
+// state rather than a tracked "current tab" variable, since none existed and
+// this is the only place that needs one.
+function _refreshLiveViews() {
+  const active = id => document.getElementById(id)?.classList.contains('active');
+  if (_liveInclude && active('tab-table'))      renderTable();
+  if (active('tab-matchweek'))                  renderMatchweekPage(_currentMW);
+  if (active('tab-scout'))                      renderScout(_hullNextOpponent(), 'scout');
+  if (active('tab-scoutpick'))                  renderScout(_scoutPicked || _hullNextOpponent(), 'scoutpick');
 }
 
 function setLiveInclude(on) {
@@ -3469,6 +3485,10 @@ function renderMatchweekPage(mw) {
     const isHull    = f.homeId === 'hull' || f.awayId === 'hull';
     const hullCls   = isHull ? ' hull-game' : '';
     const result    = STATE.results.find(r => r.homeId === f.homeId && r.awayId === f.awayId);
+    // A result already synced always wins — see loadLive's note on
+    // _liveUnplayed, a fixture can finish and be entered while the feed still
+    // reports it live for a few polls.
+    const live      = !result ? _liveFor(f.homeId, f.awayId) : null;
 
     const teamRow = `
       <div class="fx-teams">
@@ -3480,6 +3500,9 @@ function renderMatchweekPage(mw) {
           ${result
             ? `<div class="fx-score">${result.homeGoals}–${result.awayGoals}</div>
                <div class="fx-confirmed">Full Time</div>`
+            : live
+            ? `<div class="fx-score">${live.homeGoals}–${live.awayGoals}</div>
+               <div class="fx-confirmed" style="color:#dc143c"><span class="lv-dot"></span> ${live.clock || 'LIVE'}</div>`
             : `<div class="fx-vs">vs</div>`}
         </div>
         <div class="fx-team away">
@@ -3490,6 +3513,15 @@ function renderMatchweekPage(mw) {
 
     if (result) {
       return `<div class="fixture-card${hullCls}">${teamRow}${fullTimeHTML(f, result)}</div>`;
+    }
+
+    if (live) {
+      // Live replaces the prediction entirely rather than sitting alongside
+      // it — showing a pre-match win/draw/loss estimate next to an actual
+      // scoreline would read as the model still guessing mid-match.
+      return `<div class="fixture-card${hullCls}">${teamRow}${_liveFixtureBody(live)}
+        <div class="lvs-note">Provisional — not saved. Mid-match numbers describe the
+          state of the game as much as the team.</div></div>`;
     }
 
     const p = predictFixture(f.homeId, f.awayId);
@@ -4051,7 +4083,7 @@ async function loadScout(which) {
   // Both sub-tabs need styles + derived; fetch once, reuse after.
   if (!_stylesData) { try { _stylesData = (await (await fetch('/api/styles')).json()).teams || []; } catch (e) {} }
   if (!_dvData)     { try { _dvData = await (await fetch('/api/derived?season=2627')).json(); } catch (e) {} }
-  await loadScoutLive(which);
+  await loadLive();
 
   if (which === 'scoutpick') {
     _renderScoutPicker();
@@ -4064,28 +4096,10 @@ async function loadScout(which) {
 // Scouting a side while it plays. Same read-only rule as the table: this is
 // the match as it stands, never stored, and explicitly labelled provisional —
 // a team defending a 5-1 lead posts numbers that describe the scoreline rather
-// than the team.
-let _scoutLive = [];
-let _scoutLiveTimer = null;
-
-async function loadScoutLive(which) {
-  try {
-    const r = await fetch('/api/live?detail=1');
-    const d = await r.json();
-    if (r.ok && !d.error) _scoutLive = d.live || [];
-  } catch (e) { /* keep what we have */ }
-  clearTimeout(_scoutLiveTimer);
-  if (_scoutLive.length) {
-    _scoutLiveTimer = setTimeout(() => loadScoutLive(which).then(() => {
-      const id = which === 'scoutpick' ? (_scoutPicked || _hullNextOpponent())
-                                       : _hullNextOpponent();
-      renderScout(id, which);
-    }), LIVE_POLL_MS);
-  }
-}
-
+// than the team. Reads the shared _liveData feed — see loadLive() — rather
+// than keeping its own poll loop.
 function _scoutLiveFor(teamId) {
-  return _scoutLive.find(m => m.homeId === teamId || m.awayId === teamId) || null;
+  return _liveData.find(m => m.homeId === teamId || m.awayId === teamId) || null;
 }
 
 function _scoutLivePanel(teamId) {
@@ -4683,6 +4697,52 @@ function renderTeamStats() {
 
 function initMatchweek() {
   renderMatchweekPage(getCurrentMatchweek());
+  loadLive();
+}
+
+// Live match for a fixture that has not been entered as a result yet. Once a
+// result exists that card shows the confirmed score instead, same rule as
+// the table's _liveUnplayed — a synced result always wins over a live one.
+function _liveFor(homeId, awayId) {
+  return _liveData.find(m => m.homeId === homeId && m.awayId === awayId) || null;
+}
+
+// A compact version of the Scout live panel, framed as home vs away rather
+// than "my team vs opponent" since a fixture card has no team of its own.
+// Trimmed to four stats rather than Scout's eleven — up to ten of these can
+// be on screen in one matchweek, all of them live at kickoff time.
+const MW_LIVE_STATS = ['Possession %', 'Shots', 'On target', 'Big chances'];
+
+function _liveFixtureBody(m) {
+  const h = teamMap[m.homeId], a = teamMap[m.awayId];
+  const homeShape = m.formations && m.formations[m.homeId];
+  const awayShape = m.formations && m.formations[m.awayId];
+  const st = m.stats;
+  const idx = st ? MW_LIVE_STATS.map(lab => st.labels.indexOf(lab)).filter(i => i >= 0) : [];
+
+  const rows = idx.map(i => {
+    const hv = st.home[i], av = st.away[i];
+    if (hv == null && av == null) return '';
+    const x = Number(hv || 0), y = Number(av || 0);
+    const pct = (x + y) ? (x / (x + y)) * 100 : 50;
+    return `<tr>
+      <td style="text-align:right;width:15%"><strong>${hv ?? '–'}</strong></td>
+      <td style="width:44%"><div class="lvs-bar"><div class="lvs-fill" style="width:${pct.toFixed(0)}%"></div></div></td>
+      <td class="pr-dim" style="text-align:left;width:15%">${av ?? '–'}</td>
+      <td class="pr-dim" style="text-align:left;font-size:0.64rem">${st.labels[i]}</td>
+    </tr>`;
+  }).join('');
+
+  return `
+    <div class="lvs-panel" style="margin:10px 0 0">
+      <div class="lvs-head" style="font-size:0.72rem">
+        <span class="lv-dot"></span><strong>Live</strong>
+        <span class="lv-clock">${m.clock || ''}</span>
+        ${homeShape ? `<span class="fm-chip">${homeShape}</span>` : ''}
+        ${awayShape ? `<span class="fm-chip" style="opacity:0.6">v ${awayShape}</span>` : ''}
+      </div>
+      ${rows ? `<table class="pr-tbl lvs-tbl"><tbody>${rows}</tbody></table>` : ''}
+    </div>`;
 }
 
 // ═══════════════════════════════════════════════════
