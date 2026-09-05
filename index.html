@@ -1402,6 +1402,30 @@
       transition: transform 0.15s ease;
     }
     .lv-match:hover .lv-crest { transform: scale(1.2); }
+
+    /* ── the 200k-simulation progress bar actually moving, not just filling ── */
+    @keyframes progStripes { from { background-position: 0 0; } to { background-position: 28px 0; } }
+    .mc-prog-fill { position: relative; overflow: hidden; }
+    .mc-prog-fill::after {
+      content: ''; position: absolute; inset: 0;
+      background-image: repeating-linear-gradient(45deg,
+        rgba(255,255,255,0.22) 0 7px, transparent 7px 14px);
+      animation: progStripes 0.6s linear infinite;
+    }
+
+    /* ── goal confetti — a burst of colour at the score, not just a number pop ── */
+    .confetti-bit {
+      position: fixed; width: 7px; height: 7px; border-radius: 1px;
+      pointer-events: none; z-index: 9999; top: 0; left: 0;
+      animation: confettiFly 0.9s cubic-bezier(.15,.7,.3,1) forwards;
+    }
+    @keyframes confettiFly {
+      0%   { transform: translate(var(--ox,0px), var(--oy,0px)) rotate(0deg);   opacity: 1; }
+      100% { transform: translate(var(--dx),     var(--dy))     rotate(360deg); opacity: 0; }
+    }
+
+    /* ── league table FLIP reorder: rows slide to their new spot ── */
+    #table-body tr { transition: transform 0.45s cubic-bezier(.2,.8,.2,1); }
     tr.lv-row td { box-shadow: inset 3px 0 0 #dc143c; }
     .lv-delta { font-size: 0.62rem; margin-left: 5px; font-weight: 700; }
     .lvs-panel {
@@ -2930,6 +2954,16 @@ async function loadLive() {
   }
   renderLiveStrip();
   _refreshLiveViews();
+  // Confetti at whichever score elements the render just marked as having
+  // just changed — a frame late, so the new DOM nodes exist to anchor it to.
+  if (_justScored.size) {
+    requestAnimationFrame(() => {
+      document.querySelectorAll('.fx-score-pop').forEach(el => {
+        const r = el.getBoundingClientRect();
+        _confettiBurst(r.left + r.width / 2, r.top + r.height / 2);
+      });
+    });
+  }
   // Only poll while something is actually being played.
   clearTimeout(_liveTimer);
   if (_liveData.length) _liveTimer = setTimeout(loadLive, LIVE_POLL_MS);
@@ -2993,6 +3027,10 @@ function renderTable() {
     ? new Map(buildTable(base).map((r, i) => [r.id, i + 1])) : null;
   const proj = form ? null : computeAllProjections();
   const tbody = document.getElementById('table-body');
+  // FLIP: where every team's row sits right now, before the rebuild throws
+  // it away — so a result that shuffles the table can animate rows sliding
+  // to their new spot instead of just teleporting there.
+  const prevTop = new Map([...tbody.children].map(tr => [tr.dataset.team, tr.getBoundingClientRect().top]));
   tbody.innerHTML = '';
 
   rows.forEach((row, i) => {
@@ -3021,6 +3059,7 @@ function renderTable() {
 
     const tr = document.createElement('tr');
     tr.className = zoneClass + (liveTeams.has(row.id) ? ' lv-row' : '');
+    tr.dataset.team = row.id;
     tr.innerHTML = `
       <td class="td-pos c">${pos}${(() => {
         if (!settled || !liveTeams.has(row.id)) return '';
@@ -3050,6 +3089,25 @@ function renderTable() {
     `;
     tbody.appendChild(tr);
   });
+
+  // FLIP play: set every moved row's offset with transitions off, force one
+  // reflow so the browser actually paints that "before" position, then clear
+  // it on the next frame so the existing #table-body tr transition eases each
+  // row back to zero — a batch of one reflow rather than one per row, and
+  // read-then-write kept apart so this does not thrash layout.
+  if (prevTop.size) {
+    const moved = [...tbody.children].filter(tr => {
+      const before = prevTop.get(tr.dataset.team);
+      if (before == null) return false;                  // a team new to the page (e.g. first render)
+      tr._flipDelta = before - tr.getBoundingClientRect().top;
+      return tr._flipDelta;
+    });
+    moved.forEach(tr => { tr.style.transition = 'none'; tr.style.transform = `translateY(${tr._flipDelta}px)`; });
+    tbody.offsetHeight;   // force the browser to commit the offset before releasing it
+    requestAnimationFrame(() => {
+      moved.forEach(tr => { tr.style.transition = ''; tr.style.transform = ''; });
+    });
+  }
 
   // Stats bar
   const n = STATE.results.length;
@@ -5614,7 +5672,7 @@ async function runMC() {
     `Running <strong style="color:#F5A12D">${TOTAL.toLocaleString()}</strong> simulations (shared with Survival)…
      <div style="margin:10px 0 0;max-width:340px;height:8px;background:rgba(255,255,255,0.08);
                  border-radius:4px;overflow:hidden">
-       <div id="mc-prog" style="height:100%;width:0%;background:linear-gradient(90deg,#F5A12D,#00ff85);transition:width .15s"></div>
+       <div id="mc-prog" class="mc-prog-fill" style="height:100%;width:0%;background:linear-gradient(90deg,#F5A12D,#00ff85);transition:width .15s"></div>
      </div>`;
 
   let N = 0;
@@ -6011,6 +6069,27 @@ let toastTimer;
 // A shimmering placeholder for a tab's first load, in place of static
 // "Loading…" text. .skeleton/@keyframes shimmer already existed in the CSS
 // and were never actually used anywhere.
+// A short burst of colour at a point on screen — used for a live goal, where
+// the existing score-pop text animation is real feedback but not much of an
+// event. Plain DOM elements animated with CSS custom properties per particle,
+// removed once their animation ends rather than left to accumulate.
+function _confettiBurst(x, y, n = 14) {
+  const colors = ['#F5A12D', '#00ff85', '#38bdf8', '#ff4d5e', '#ffd700'];
+  for (let i = 0; i < n; i++) {
+    const el = document.createElement('div');
+    el.className = 'confetti-bit';
+    const angle = (Math.PI * 2 * i) / n + (Math.random() * 0.5 - 0.25);
+    const dist  = 36 + Math.random() * 46;
+    el.style.setProperty('--ox', x + 'px');
+    el.style.setProperty('--oy', y + 'px');
+    el.style.setProperty('--dx', (x + Math.cos(angle) * dist) + 'px');
+    el.style.setProperty('--dy', (y + Math.sin(angle) * dist - 24) + 'px');  // bias upward
+    el.style.background = colors[i % colors.length];
+    el.addEventListener('animationend', () => el.remove());
+    document.body.appendChild(el);
+  }
+}
+
 function _skeletonBlock(label, rows = 4) {
   const widths = [92, 78, 85, 65, 72, 58];
   return `<div class="sk-wrap">
@@ -7309,7 +7388,7 @@ async function runSurvival() {
       Running <strong style="color:#F5A12D">200,000</strong> simulations
       <span style="opacity:.7">— shared with League Odds</span>
       <div style="margin:12px auto 0;max-width:340px;height:8px;background:rgba(255,255,255,0.08);border-radius:4px;overflow:hidden">
-        <div id="surv-prog" style="height:100%;width:0%;background:linear-gradient(90deg,#F5A12D,#00ff85);transition:width .15s"></div>
+        <div id="surv-prog" class="mc-prog-fill" style="height:100%;width:0%;background:linear-gradient(90deg,#F5A12D,#00ff85);transition:width .15s"></div>
       </div>
       <div id="surv-prog-pct" style="margin-top:7px;font-size:0.75rem;color:var(--text-secondary)">0%</div>
     </div>`;
@@ -7328,7 +7407,7 @@ async function runSurvival() {
   body.innerHTML = `<div style="padding:26px;text-align:center;color:var(--text-secondary)">
     Running <strong style="color:#F5A12D">${N.toLocaleString()}</strong> simulations for sharper resolution…
     <div style="margin:12px auto 0;max-width:340px;height:8px;background:rgba(255,255,255,0.08);border-radius:4px;overflow:hidden">
-      <div id="surv-prog" style="height:100%;width:0%;background:linear-gradient(90deg,#F5A12D,#00ff85);transition:width .15s"></div>
+      <div id="surv-prog" class="mc-prog-fill" style="height:100%;width:0%;background:linear-gradient(90deg,#F5A12D,#00ff85);transition:width .15s"></div>
     </div></div>`;
   for (let d = 0; d < N; d += CHUNK) {
     _survBatch(st, Math.min(CHUNK, N - d));
