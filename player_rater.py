@@ -58,10 +58,11 @@ CONCEPTS_OUT = {
     "Progression":  {"stats": ["carries", "progressiveCarries", "finalThirdEntries"],
                      "ctx": "att"},
     "Ball-winning": {"stats": ["effectiveTackles", "interceptions", "ballRecoveries",
-                               "possWonDef3rd", "possWonMid3rd", "possWonAtt3rd"],
+                               "possWonDef3rd", "possWonMid3rd", "possWonAtt3rd",
+                               "ballWinsPer100Touches"],
                      "ctx": "def"},
     "Defending":    {"stats": ["totalClearance", "headClearances", "blockedShots",
-                               "blockedCrosses"], "ctx": "def"},
+                               "blockedCrosses", "clearancesPer100Touches"], "ctx": "def"},
     # Volume AND success rate: how often he contests, and whether he wins.
     "Duels":        {"stats": ["duelsWon", "aerialsWon",
                                "duelWinPct", "aerialWinPct"], "ctx": "def"},
@@ -410,7 +411,8 @@ def _role(player: dict) -> str:
 
 # Stats already expressed as a rate — must not be divided by minutes again.
 RATE_STATS = {"passPct", "savePct", "tacklePct", "shotPct", "goalConversion",
-               "duelWinPct", "aerialWinPct", "turnoverRate", "iboxShare"}
+               "duelWinPct", "aerialWinPct", "turnoverRate", "iboxShare",
+               "clearancesPer100Touches", "ballWinsPer100Touches"}
 
 
 # Derived per-opportunity rates, injected into every player's stat block.
@@ -442,6 +444,17 @@ DERIVED_RATES = {
     # percentiles are inverted; the two are the same measurement.
     "turnoverRate": lambda s: _share(s.get("possLost"), s.get("touches")),
     "iboxShare":    lambda s: _share(s.get("attemptsIbox"), s.get("totalShots")),
+    # Per-touch, not per-90: a defender at a 29%-possession side sees far
+    # fewer touches than one at a possession side, so a raw per-90 clearance
+    # or ball-winning count already undercounts his workrate relative to how
+    # much of the game he is actually in. Repeatability is a wash against the
+    # per-90 versions already in use (0.85-0.89 vs 0.73-0.91) — this is not
+    # about which is more predictive, it is about crediting a low-possession
+    # defender for what he does with the ball he gets, not just what he does
+    # per minute on the pitch.
+    "clearancesPer100Touches": lambda s: _share(s.get("totalClearance"), s.get("touches")),
+    "ballWinsPer100Touches":   lambda s: _share((s.get("interceptions") or 0) + (s.get("ballRecoveries") or 0),
+                                                s.get("touches")),
 }
 
 
