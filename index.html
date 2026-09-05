@@ -341,9 +341,17 @@
 
     /* A team crossing a zone boundary (into/out of relegation, Europe, the
        top of the table) gets one bright sweep through its row. */
+    /* box-shadow, not background — a row crossing a zone boundary very often
+       also moves position (you cannot enter the top 5 without a position
+       change), so this and flip-up/flip-down regularly land on the same
+       row at once. A CSS animation always wins over a class's own
+       background-color for as long as it runs, so if both used `background`
+       this one would have silently blanked the up/down colour every time
+       they coincided — found by Brentford jumping into the Champions League
+       zone in the same result that sent it up six places. */
     @keyframes rowZoneAlert {
-      0%, 100% { background: transparent; }
-      35%      { background: rgba(255,255,255,0.07); }
+      0%, 100% { box-shadow: none; }
+      35%      { box-shadow: inset 0 0 0 999px rgba(255,255,255,0.10); }
     }
     tr.zone-alert { animation: rowZoneAlert 0.9s ease; }
 
@@ -1471,6 +1479,13 @@
 
     /* ── league table FLIP reorder: rows slide to their new spot ── */
     #table-body tr { transition: transform 2s cubic-bezier(.2,.8,.2,1); }
+    /* A row climbing or dropping the table gets a colour wash for exactly the
+       length of its slide — set at full strength with transitions killed
+       (the same instant-then-release trick the FLIP transform itself uses),
+       so it appears the moment the row starts moving and fades out in sync
+       with the slide settling, rather than fading in or snapping off early. */
+    #table-body tr.flip-up   { background-color: rgba(0,255,133,0.22); transition: background-color 2s cubic-bezier(.2,.8,.2,1), transform 2s cubic-bezier(.2,.8,.2,1); }
+    #table-body tr.flip-down { background-color: rgba(255,77,94,0.22);  transition: background-color 2s cubic-bezier(.2,.8,.2,1), transform 2s cubic-bezier(.2,.8,.2,1); }
 
     /* ── hover coverage: every element type below had zero mouseover feedback ── */
     .card-header { transition: filter 0.15s ease; }
@@ -3317,10 +3332,21 @@ function renderTable() {
       tr._flipDelta = before - tr.getBoundingClientRect().top;
       return tr._flipDelta;
     });
-    moved.forEach(tr => { tr.style.transition = 'none'; tr.style.transform = `translateY(${tr._flipDelta}px)`; });
-    tbody.offsetHeight;   // force the browser to commit the offset before releasing it
+    moved.forEach(tr => {
+      tr.style.transition = 'none';
+      tr.style.transform = `translateY(${tr._flipDelta}px)`;
+      // Positive delta: the row's new top is smaller than its old one, i.e.
+      // it slides UPWARD into place — climbed the table. Negative: it slides
+      // down — dropped.
+      tr.classList.add(tr._flipDelta > 0 ? 'flip-up' : 'flip-down');
+    });
+    tbody.offsetHeight;   // force the browser to commit the offset (and the flash) before releasing it
     requestAnimationFrame(() => {
-      moved.forEach(tr => { tr.style.transition = ''; tr.style.transform = ''; });
+      moved.forEach(tr => {
+        tr.style.transition = '';
+        tr.style.transform = '';
+        tr.classList.remove('flip-up', 'flip-down');
+      });
     });
   }
 
