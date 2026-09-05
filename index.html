@@ -1426,6 +1426,51 @@
 
     /* ── league table FLIP reorder: rows slide to their new spot ── */
     #table-body tr { transition: transform 0.45s cubic-bezier(.2,.8,.2,1); }
+
+    /* ── hover coverage: every element type below had zero mouseover feedback ── */
+    .card-header { transition: filter 0.15s ease; }
+    .card-header:hover { filter: brightness(1.12); }
+
+    .ts-card, .dv-card { transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease; }
+    .ts-card:hover, .dv-card:hover {
+      transform: translateY(-2px);
+      border-color: rgba(245,161,45,0.35);
+      background: rgba(255,255,255,0.045);
+    }
+
+    .style-tag, .press-tag {
+      transition: transform 0.13s ease, filter 0.13s ease; display: inline-block;
+    }
+    .style-tag:hover, .press-tag:hover { transform: scale(1.1); filter: brightness(1.25); }
+
+    .form-pip { transition: transform 0.13s ease; }
+    .form-pip:not(.fp-blank):hover { transform: scale(1.25); }
+
+    .zone-item { padding: 2px 6px; margin: -2px -6px; border-radius: 4px; transition: background 0.15s ease; }
+    .zone-item:hover { background: rgba(255,255,255,0.06); }
+
+    .wdl-seg { transition: filter 0.15s ease, transform 0.15s ease; }
+    .wdl-seg:hover { filter: brightness(1.2); transform: scaleY(1.08); }
+
+    .pr-shirt { transition: color 0.15s ease, transform 0.15s ease; display: inline-block; }
+    .pr-shirt:hover { color: #F5A12D; transform: scale(1.15); }
+
+    .lb-crest { transition: transform 0.15s ease; }
+    tr:hover .lb-crest, .lvs-head:hover .lb-crest { transform: scale(1.2); }
+
+    .dash-card { transition: transform 0.18s ease, box-shadow 0.18s ease; }
+    .dash-card:hover { transform: translateY(-3px); box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+    .dash-hero { transition: filter 0.2s ease, box-shadow 0.2s ease; }
+    .dash-hero:hover { filter: brightness(1.06); box-shadow: 0 0 30px rgba(245,161,45,0.15); }
+
+    .rel-bar-row { padding: 3px 4px; margin: 2px -4px; border-radius: 5px; transition: background 0.15s ease; }
+    .rel-bar-row:hover { background: rgba(255,255,255,0.04); }
+
+    .posdist-cell { transition: filter 0.12s ease, transform 0.12s ease; }
+    .posdist-cell:hover { filter: brightness(1.5); transform: scaleY(1.06); }
+
+    .score-matrix td { transition: filter 0.12s ease, transform 0.1s ease; cursor: default; }
+    .score-matrix td:hover { filter: brightness(1.35); transform: scale(1.08); position: relative; z-index: 1; }
     tr.lv-row td { box-shadow: inset 3px 0 0 #dc143c; }
     .lv-delta { font-size: 0.62rem; margin-left: 5px; font-weight: 700; }
     .lvs-panel {
