@@ -567,8 +567,9 @@ def team_context(season: str = "2627") -> dict:
 # A leaderboard needs a floor: with two games played, a 20-minute substitute
 # who touched the ball twice can post a spectacular per-90. Expressed as a
 # share of the most-used player's minutes so it scales with the season instead
-# of needing to be re-tuned — 40% is roughly "a regular", not "an ever-present".
-MIN_MINUTES_SHARE = 0.4
+# of needing to be re-tuned — 25% is roughly "a squad player who features",
+# not "an ever-present".
+MIN_MINUTES_SHARE = 0.25
 
 
 def _rate_pool(players: list[dict], season: str = "2627",
