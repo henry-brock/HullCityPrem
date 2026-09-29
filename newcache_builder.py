@@ -31,15 +31,12 @@ teams outside the 2026/27 roster (Leicester, Southampton, …). Opponent-
 adjusted ratings need those games to rate the teams that did stay up;
 `homeId`/`awayId` are simply null for a team with no internal id.
 
-Resumable: per-fixture stats are keyed by fixture id, and progress is
-flushed to disk as it goes, so an interrupted run resumes where it stopped.
-
-Settled vs provisional: Opta keeps editing a match for a day or two after
-the whistle — possession is re-derived and late fields like clean_sheet
-arrive after the initial feed. A match archived straight after kickoff is
-therefore frozen with provisional numbers unless it is fetched again, so
-anything played within SETTLE_DAYS is re-fetched on every run. Older
-matches, including whole finished seasons, are never re-fetched.
+Stat blocks come from pulse_results.match_stats — the one per-season cache
+the results sync also reads — so a match is downloaded once for both, not
+once each. That cache owns the settled-vs-provisional policy: Opta keeps
+editing a match for a day or two after the whistle, so an unsettled match is
+re-read at most every few hours, then once more after it settles, then never.
+It also flushes as it goes, so an interrupted rebuild resumes.
 """
 
 import argparse
@@ -51,7 +48,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fixture_scraper import _fetch_all, _is_home, _name_to_id, _team_name
-from pulse_results import _fetch_match_stats, _find_season_id, _season_year
+from pulse_results import _find_season_id, _season_year, match_stats
 from scraper import SeasonNotAvailable
 
 ROOT     = Path(__file__).parent
@@ -60,10 +57,6 @@ NEWCACHE = ROOT / "Newcache"
 # The window that feeds predictions: ratings.py's three-season lookback
 # plus the live season.
 DEFAULT_SEASONS = ["2324", "2425", "2526", "2627"]
-
-REQUEST_DELAY = 0.15   # be polite — this walks ~380 fixtures per season
-FLUSH_EVERY   = 25     # matches between incremental saves
-SETTLE_DAYS   = 7      # a match younger than this may still be provisional
 
 
 def _season_path(season: str) -> Path:
@@ -142,48 +135,45 @@ def _record(fixture: dict, stats_by_team: dict) -> dict | None:
     }
 
 
-def _settled(record: dict) -> bool:
-    """
-    True once a match is old enough that Opta has stopped revising it. A
-    record with no kickoff time is treated as settled: those come from the
-    finished archive seasons, which are long past.
-    """
-    millis = record.get("ms") or 0
-    if not millis:
-        return True
-    age = datetime.now(tz=timezone.utc) - datetime.fromtimestamp(millis / 1000,
-                                                                 tz=timezone.utc)
-    return age > timedelta(days=SETTLE_DAYS)
+def build_season(season: str, force: bool = False, min_interval: float = 0) -> dict:
+    """Fetch/refresh one season into Newcache. Returns a summary dict.
 
-
-def build_season(season: str, force: bool = False) -> dict:
-    """Fetch/refresh one season into Newcache. Returns a summary dict."""
+    min_interval: seconds. If the season was rebuilt more recently than
+    this, return without touching the network. The Team Stats and Derived
+    Stats endpoints top the archive up on every request, and a tab opened
+    twice in a minute has nothing new to find the second time.
+    """
     NEWCACHE.mkdir(exist_ok=True)
+    path = _season_path(season)
+    if (min_interval and not force and path.exists()
+            and time.time() - path.stat().st_mtime < min_interval):
+        return {"season": season, "skipped": True}
 
     comp_season_id = _find_season_id(_season_year(season))
     cached = {} if force else _load_season(season)
 
-    fixtures = [f for f in _fetch_all(comp_season_id) if f.get("status") == "C"]
+    fixtures = [f for f in _fetch_all(comp_season_id, statuses="C") if f.get("status") == "C"]
     print(f"[newcache] {season}: {len(fixtures)} completed, "
           f"{len(cached)} already cached", file=sys.stderr)
 
-    fetched = 0
-    for i, fixture in enumerate(fixtures, 1):
+    # Blocks this archive already holds, offered to the shared cache for keys
+    # it lacks — so a season built before that cache existed is not
+    # downloaded a second time. The archive stores them by side; the shared
+    # cache by Pulse team id.
+    seed = {}
+    for fixture in fixtures:
         key = str(int(fixture["id"]))
-        if key in cached and cached[key].get("stats", {}).get("home") \
-                and _settled(cached[key]):
-            continue
+        rec = cached.get(key)
+        home, away = _sides(fixture)
+        if rec and home and away and (rec.get("stats") or {}).get("home"):
+            seed[key] = {home["pulseId"]: rec["stats"]["home"],
+                         away["pulseId"]: rec["stats"].get("away") or {}}
 
-        record = _record(fixture, _fetch_match_stats(int(fixture["id"])))
+    stats, fetched = match_stats(fixtures, season, force=force, seed=seed)
+    for fixture in fixtures:
+        record = _record(fixture, stats.get(str(int(fixture["id"])), {}))
         if record:
-            cached[key] = record
-        fetched += 1
-        time.sleep(REQUEST_DELAY)
-
-        if fetched % FLUSH_EVERY == 0:
-            _save_season(season, comp_season_id, cached)
-            print(f"[newcache] {season}: {i}/{len(fixtures)} "
-                  f"({fetched} fetched)", file=sys.stderr)
+            cached[str(int(fixture["id"]))] = record
 
     _save_season(season, comp_season_id, cached)
     print(f"[newcache] {season}: done — {len(cached)} matches "

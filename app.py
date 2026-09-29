@@ -7,11 +7,19 @@ from pulse_results import fetch as scrape_live
 from fixture_scraper import fetch as scrape_fixtures, FixturesNotAvailable
 from collections import defaultdict
 import json
+import os
 import sys
+import threading
+import time
 
 app  = Flask(__name__)
+
 ROOT = Path(__file__).parent
 DB   = ROOT / "data.json"
+
+# Team Stats and Derived Stats top Newcache up on every request; within this
+# many seconds of the last top-up there is nothing new for them to find.
+NEWCACHE_TOPUP_EVERY = 600
 
 
 def _load() -> dict:
@@ -51,6 +59,14 @@ def post_state():
         return jsonify({"ok": True})
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/deductions", methods=["GET"])
+def get_deductions():
+    """Read-only here — deductions are added and removed from admin.py."""
+    import deductions
+    entries = deductions.load()
+    return jsonify({"deductions": entries, "totals": deductions.totals(entries)})
 
 
 @app.route("/api/fixtures", methods=["GET"])
@@ -120,7 +136,7 @@ def derived():
     if request.args.get("refresh", "1") == "1":
         try:
             import newcache_builder
-            newcache_builder.build_season(season)
+            newcache_builder.build_season(season, min_interval=NEWCACHE_TOPUP_EVERY)
         except Exception as exc:
             print(f"[derived] refresh skipped: {exc}", file=sys.stderr)
     try:
@@ -182,7 +198,7 @@ def team_stats():
     if request.args.get("refresh", "1") == "1":
         try:
             import newcache_builder
-            newcache_builder.build_season(season)
+            newcache_builder.build_season(season, min_interval=NEWCACHE_TOPUP_EVERY)
         except Exception as exc:                      # stale cache beats a 500
             print(f"[teamstats] refresh skipped: {exc}", file=sys.stderr)
 
@@ -272,15 +288,19 @@ def import_results():
         # lands mid-window leaves minutes and goals frozen at the previous
         # match for hours, and the "refetch when appearances changed" logic in
         # pl_players never gets a chance to run because the file-level TTL
-        # short-circuits it first. Dropping the caches on import ties
-        # invalidation to the event that actually invalidates them.
+        # short-circuits it first.
+        #
+        # So the cache is EXPIRED, not deleted: backdating its mtime fails the
+        # TTL check while keeping the per-player appearance counts that let
+        # pl_players refetch only the ~20 players who just played. Deleting
+        # it threw those away and cost ~415 calls per new result.
         if added:
-            for name in (f"pulse_players_{season}.json", f"pl_players_{season}.json"):
-                stale = CACHE_DIR / name
-                try:
-                    stale.unlink(missing_ok=True)
-                except OSError as exc:
-                    print(f"[import] could not clear {name}: {exc}", file=sys.stderr)
+            stale = CACHE_DIR / f"pl_players_{season}.json"
+            try:
+                if stale.exists():
+                    os.utime(stale, (0, 0))
+            except OSError as exc:
+                print(f"[import] could not expire {stale.name}: {exc}", file=sys.stderr)
 
         return jsonify({
             "ok":       True,
@@ -369,12 +389,14 @@ def hull_analysis(league):
 
 
 def _live_detail(fixture_id: int, ids: list) -> dict:
-    """Formations, starting lineups and a readable slice of the live Opta blocks."""
+    """Formations, starting lineups, events and a readable slice of the live
+    Opta blocks — the same shape match_details() gives a finished match, so
+    the frontend's player rater doesn't need to know live from finished."""
     from lineups import MATCH_STATS, _team_map
     from pulse_results import _fetch_match_stats
     from pl_players import _pulse_get
 
-    out = {"stats": None, "formations": None, "lineup": None}
+    out = {"stats": None, "formations": None, "lineup": None, "events": None}
     try:
         blocks = _fetch_match_stats(fixture_id)
         names  = _team_map("2627")
@@ -390,24 +412,48 @@ def _live_detail(fixture_id: int, ids: list) -> dict:
     try:
         fx = _pulse_get(f"fixtures/{fixture_id}")
         names = _team_map("2627")
-        form, lineup = {}, {}
+        form, lineup, id_to_name, id_to_team = {}, {}, {}, {}
         for tl in fx.get("teamLists") or []:
             tid = names.get(int(tl.get("teamId")))
             if not tid:
                 continue
             form[tid] = (tl.get("formation") or {}).get("label")
-            # Same last-name-only, formation-row grouping match_details() uses
-            # for a finished game, built here from the live payload instead of
-            # the cache — a live lineup does not wait for a settle window,
-            # since who started is fixed at kickoff and never revised.
+            for p in (tl.get("lineup") or []) + (tl.get("substitutes") or []):
+                if p.get("id"):
+                    id_to_name[str(int(p["id"]))] = (p.get("name") or {}).get("display")
+                    id_to_team[str(int(p["id"]))] = tid
+            # Same {id, name}, formation-row grouping match_details() uses for
+            # a finished game, built here from the live payload instead of the
+            # cache — a live lineup does not wait for a settle window, since
+            # who started is fixed at kickoff and never revised.
             rows = (tl.get("formation") or {}).get("players") or []
-            id_to_name = {str(int(p["id"])): (p.get("name") or {}).get("display")
-                          for p in (tl.get("lineup") or []) if p.get("id")}
             if rows:
-                lineup[tid] = [[(id_to_name.get(str(pid)) or "?").split()[-1]
+                lineup[tid] = [[{"id": pid, "name": (id_to_name.get(str(pid)) or "?").split()[-1]}
                                for pid in row] for row in rows]
         out["formations"] = form or None
         out["lineup"] = lineup or None
+
+        events = []
+        for e in fx.get("events") or []:
+            if e.get("type") not in ("G", "B", "S"):
+                continue
+            pid = e.get("personId")
+            tid = id_to_team.get(str(pid))
+            if not tid:
+                continue
+            etype = ("goal" if e["type"] == "G" else
+                     "sub" if e["type"] == "S" else
+                     ("red" if e.get("description") == "R" else "yellow"))
+            aid = e.get("assistId") if e["type"] == "G" else None
+            events.append({
+                "type": etype, "team": tid, "playerId": pid,
+                "player": (id_to_name.get(str(pid)) or "?").split()[-1],
+                "assistId": aid,
+                "assist": (id_to_name.get(str(aid)) or "?").split()[-1] if aid else None,
+                "dir": e.get("description") if e["type"] == "S" else None,
+                "clock": (e.get("clock") or {}).get("label"),
+            })
+        out["events"] = events or None
     except Exception:
         pass
     return out
@@ -423,38 +469,61 @@ def live_matches():
     of the settle window elsewhere is that provisional data must never be
     stored as if it were final. This exists to be shown, then thrown away.
     """
-    try:
-        from fixture_scraper import _fetch_all, _name_to_id, _team_name
-        from pulse_results import _find_season_id, _season_year
+    season = request.args.get("season", "2627")
+    detail = request.args.get("detail") == "1"
+    key = (season, detail)
+    # Every open tab polls once a minute, and the Table and Live tabs each ask
+    # again when opened. Within LIVE_TTL they all get the same answer from one
+    # Pulse round trip; the lock stops simultaneous callers each fetching it.
+    with _live_lock:
+        hit = _live_cache.get(key)
+        if hit and time.monotonic() - hit[0] < LIVE_TTL:
+            return jsonify(hit[1])
+        try:
+            payload = {"live": _live_now(season, detail)}
+        except Exception as exc:
+            return jsonify({"live": [], "error": str(exc)}), 500
+        _live_cache[key] = (time.monotonic(), payload)
+        return jsonify(payload)
 
-        season = request.args.get("season", "2627")
-        out = []
-        for f in _fetch_all(_find_season_id(_season_year(season))):
-            if f.get("status") != "L":
-                continue
-            sides = f.get("teams") or []
-            if len(sides) != 2:
-                continue
-            ids = [_name_to_id(_team_name(s.get("team", {}))) for s in sides]
-            if not all(ids):
-                continue
-            rec = {
-                "homeId":    ids[0],
-                "awayId":    ids[1],
-                "homeGoals": int(sides[0].get("score") or 0),
-                "awayGoals": int(sides[1].get("score") or 0),
-                "clock":     (f.get("clock") or {}).get("label", ""),
-                "phase":     f.get("phase"),
-            }
-            # The stat blocks and shape cost an extra request per match, so
-            # they are opt-in: the table only needs the score, Scout wants the
-            # game as it unfolds.
-            if request.args.get("detail") == "1":
-                rec.update(_live_detail(int(f["id"]), ids))
-            out.append(rec)
-        return jsonify({"live": out})
-    except Exception as exc:
-        return jsonify({"live": [], "error": str(exc)}), 500
+
+LIVE_TTL    = 20            # seconds; a minute-by-minute clock loses nothing
+_live_cache = {}
+_live_lock  = threading.Lock()
+
+
+def _live_now(season: str, detail: bool) -> list[dict]:
+    from fixture_scraper import _fetch_all, _name_to_id, _team_name
+    from pulse_results import _find_season_id, _season_year
+
+    out = []
+    # statuses="L" filters on Pulse's side: one small request, empty on the
+    # (vast majority of) days with nothing being played.
+    for f in _fetch_all(_find_season_id(_season_year(season)), statuses="L"):
+        if f.get("status") != "L":
+            continue
+        sides = f.get("teams") or []
+        if len(sides) != 2:
+            continue
+        ids = [_name_to_id(_team_name(s.get("team", {}))) for s in sides]
+        if not all(ids):
+            continue
+        rec = {
+            "homeId":    ids[0],
+            "awayId":    ids[1],
+            "homeGoals": int(sides[0].get("score") or 0),
+            "awayGoals": int(sides[1].get("score") or 0),
+            "clock":     (f.get("clock") or {}).get("label", ""),
+            "clockSecs": (f.get("clock") or {}).get("secs"),
+            "phase":     f.get("phase"),
+        }
+        # The stat blocks and shape cost an extra request per match, so
+        # they are opt-in: the table only needs the score, Scout wants the
+        # game as it unfolds.
+        if detail:
+            rec.update(_live_detail(int(f["id"]), ids))
+        out.append(rec)
+    return out
 
 
 @app.route("/api/matchdetails")

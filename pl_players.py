@@ -6,10 +6,16 @@ and ranking within Hull's own 16 players says almost nothing. This pulls all
 20 squads so percentiles are league-wide.
 
 Cost control: the squad endpoint already reports appearances, so per-player
-stat calls are made only for players who have actually played. Early in a
-season that is a handful of requests; by May it is ~500, cached and
-incremental (a player's block is refetched only when their appearance count
-has changed).
+stat calls are made only for players who have actually played, and a
+player's block is refetched only when their appearance count has changed.
+That holds for force too — force skips the 6h TTL, it does not throw the
+cache away. (A result sync used to delete this file outright to beat the
+TTL, which made every matchday cost ~415 calls instead of the ~20 players
+who had actually played.)
+
+A block read straight after a match can be provisional — Opta revises for a
+few days — so a player whose count just changed is read once more after
+SETTLE_DAYS, then left alone.
 
 Cache: cache/pl_players_<season>.json
 """
@@ -22,7 +28,7 @@ from pathlib import Path
 
 from fixture_scraper import _name_to_id, _pulse_get, _team_name
 from pulse_players import _map_stats, _player_stats
-from pulse_results import _find_season_id, _season_year
+from pulse_results import SETTLE_DAYS, _find_season_id, _season_year
 
 ROOT      = Path(__file__).parent
 CACHE_DIR = ROOT / "cache"
@@ -75,10 +81,12 @@ def fetch(season: str = "2627", force: bool = False) -> dict:
         except (json.JSONDecodeError, KeyError):
             pass
 
+    from lineups import _team_map            # local: lineups imports this module
     season_id = _find_season_id(_season_year(season))
-    teams = _teams(season_id)
+    teams = _team_map(season)                 # disk-cached; _teams() walks fixtures
     print(f"[pl_players] {len(teams)} teams in {season}", file=sys.stderr)
 
+    now = time.time()
     players, fetched, reused = [], 0, 0
     for pulse_id, internal in sorted(teams.items(), key=lambda kv: kv[1]):
         try:
@@ -109,12 +117,21 @@ def fetch(season: str = "2627", force: bool = False) -> dict:
                 continue
 
             old = cached.get(pid)
-            if old and not force and (old.get("stats", {}).get("appearances") == apps):
-                players.append({**base, "stats": old["stats"]})
+            recheck = old.get("recheckAt") if old else None
+            if old and old.get("stats", {}).get("appearances") == apps \
+                    and (not recheck or now < recheck):
+                players.append({**base, "stats": old["stats"],
+                                **({"recheckAt": recheck} if recheck else {})})
                 reused += 1
                 continue
 
-            players.append({**base, "stats": _map_stats(_player_stats(pid, season_id))})
+            # New appearance: read now and schedule one read after it settles.
+            # Unchanged count but the recheck is due: that settled read, final.
+            changed = not old or old.get("stats", {}).get("appearances") != apps
+            record = {**base, "stats": _map_stats(_player_stats(pid, season_id))}
+            if changed:
+                record["recheckAt"] = now + SETTLE_DAYS * 86400
+            players.append(record)
             fetched += 1
             time.sleep(DELAY)
 

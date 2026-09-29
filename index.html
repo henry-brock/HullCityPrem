@@ -427,6 +427,11 @@
     tr.z-rl  { background: rgba(220, 20, 60, 0.1); }
 
     .td-pts { font-weight: 900; font-size: 1rem; }
+    .ded-neg { color: #ff4d5e; }
+    .ded-mark {
+      font-size: 0.55rem; font-weight: 800; color: #ff4d5e; margin-left: 2px;
+      cursor: help; vertical-align: super;
+    }
 
     .gd-pos { color: #00d46a; }
     .gd-neg { color: #ff4d4d; }
@@ -1120,6 +1125,30 @@
     }
     .md-chip:hover { background: rgba(255,255,255,0.10); transform: scale(1.06); }
 
+    /* ── Live tab: predictions beyond win/draw/loss, full lineup card ── */
+    .lv-predict-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+    .lv-predict-chip {
+      flex: 1; min-width: 88px; text-align: center; padding: 6px 8px;
+      background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 7px;
+    }
+    .lv-predict-chip span {
+      display: block; font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--text-secondary); margin-bottom: 2px;
+    }
+    .lv-predict-chip strong { font-size: 0.95rem; }
+    .lv-lineup-hdr {
+      font-size: 0.62rem; font-weight: 900; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--text-secondary); margin: 12px 0 6px;
+    }
+    .lv-full-lineups { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 640px) { .lv-full-lineups { grid-template-columns: 1fr; } }
+    .lv-rate-chip { display: inline-flex; align-items: center; gap: 5px; }
+    .lv-rate-badge {
+      display: inline-block; min-width: 22px; padding: 1px 4px; border-radius: 4px;
+      font-size: 0.62rem; font-weight: 900; color: #0b0b0b; text-align: center;
+    }
+
     /* ── flair: card entrance, live glow, score pop ── */
     @keyframes cardIn {
       from { opacity: 0; transform: translateY(10px) scale(0.985); }
@@ -1806,6 +1835,7 @@
   <button class="nav-btn active" data-tab="home"       onclick="showTab('home')">🏠 Home</button>
   <span class="nav-div"></span>
   <button class="nav-btn"        data-tab="table"      onclick="showTab('table')">Table<span class="caret">▾</span></button>
+  <button class="nav-btn"        data-tab="live"       onclick="showTab('live')">Live</button>
   <button class="nav-btn"        data-tab="matchweek" onclick="showTab('matchweek')">Matchweek<span class="caret">▾</span></button>
   <span class="nav-div"></span>
   <button class="nav-btn"        data-tab="simulate"  onclick="showTab('simulate')">Simulate<span class="caret">▾</span></button>
@@ -2392,6 +2422,17 @@
     </div>
   </section>
 
+  <!-- ═══ LIVE ═══ -->
+  <section id="tab-live" class="section">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Live — win/draw/loss from right now</span>
+        <span style="font-size:0.75rem;color:var(--text-secondary)">Re-projects the rest of the match from pre-match ATK/DEF every 60s</span>
+      </div>
+      <div id="live-full-list" style="padding:12px 16px 16px"></div>
+    </div>
+  </section>
+
   <!-- ═══ TEAM STATS ═══ -->
   <section id="tab-teamstats" class="section">
     <div class="card">
@@ -2604,6 +2645,50 @@ let ALL_FIXTURES = []; // populated by loadState() — do not call before init
 let STATE = { results: [], mcHistory: [] };
 let FIXTURES_SOURCE = 'random'; // 'random' | 'official'
 
+// Points deductions: { teamId: total docked }. Lives in deductions.json and is
+// edited only from admin.py — never STATE, which the browser rewrites
+// wholesale on every save. Subtracted inside buildTable, so the table, every
+// projection and every simulated season see the same totals; it never touches
+// ATK/DEF, because a docked team is exactly as good at football as before.
+let POINT_DEDUCTIONS = {};
+let _deductionList   = [];
+
+// Returns true when the totals actually changed, so callers only re-render
+// (and nag about re-running the simulation) when there is something new.
+async function loadDeductions() {
+  try {
+    const r = await fetch('/api/deductions');
+    if (!r.ok) return false;
+    const d = await r.json();
+    const next = { totals: d.totals || {}, list: d.deductions || [] };
+    const changed = JSON.stringify(next) !==
+                    JSON.stringify({ totals: POINT_DEDUCTIONS, list: _deductionList });
+    POINT_DEDUCTIONS = next.totals;
+    _deductionList   = next.list;
+    return changed;
+  } catch (e) {
+    return false;   // a failed fetch keeps the last known totals, not zero
+  }
+}
+
+// Reasons are typed by hand in the admin panel and end up inside HTML.
+function _escHTML(s) {
+  return String(s ?? '').replace(/[&<>"']/g,
+    c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function _deductionNote(teamId) {
+  const items = _deductionList.filter(d => d.team === teamId);
+  return items.map(d => `−${d.points} pts${d.reason ? ': ' + d.reason : ''}`).join('\n');
+}
+
+// Points cell content: the total, plus a marker explaining any deduction.
+function _ptsHTML(row) {
+  if (!row.ded) return `${row.pts}`;
+  return `<span class="ded-pts${row.pts < 0 ? ' ded-neg' : ''}">${row.pts}</span>`
+       + `<sup class="ded-mark" title="${_escHTML(_deductionNote(row.id))}">−${row.ded}</sup>`;
+}
+
 // Squad lives in the server cache (not in STATE); loaded separately
 
 // Analytics responses are fetched once and reused, which is right for tab
@@ -2802,6 +2887,13 @@ function computeAllProjections() {
 // Values marked (backtest) were tuned by walk-forward validation against
 // the 2025/26 season — see backtest.py.
 const LEAGUE_AVG = 1.40;   // PL average goals per team per game
+
+// Points histograms (the safety-line distribution) are arrays indexed by a
+// points total, and a points deduction can push a total below zero. Offset
+// the index rather than clamping at 0, which would silently file -8 under 0.
+const PTS_HIST_MIN = -120;               // lowest total a bin can hold
+const PTS_HIST_LEN = 240;                // -120 … 119
+function _ptsBin(p) { return Math.min(PTS_HIST_LEN - 1, Math.max(0, p - PTS_HIST_MIN)); }
 // League-average home/away split (backtest #1: beats flat one-sided boost).
 // Home teams scored 1.53/g vs 1.22 away in 2025/26 → ×1.11 / ×0.89.
 // Applied two-sided so it preserves goal totals (the old one-sided ×1.16
@@ -2981,10 +3073,17 @@ function playedSet() {
 // ═══════════════════════════════════════════════════
 // BUILD TABLE
 // ═══════════════════════════════════════════════════
-function buildTable(results, randomTie = false) {
+// deduct=false is for tables that are not season standings — "form over the
+// last six" is about matches, and a sanction is not something a club earned
+// in any of them.
+function buildTable(results, randomTie = false, deduct = true) {
   const rows = {};
   TEAMS.forEach(t => {
-    rows[t.id] = { id: t.id, p: 0, w: 0, d: 0, l: 0, gf: 0, ga: 0, pts: 0, form: [] };
+    // Deduction applied up front: points can go below zero, which is real,
+    // and nothing below this line assumes otherwise — the sort is a plain
+    // numeric comparison.
+    const ded = deduct ? (POINT_DEDUCTIONS[t.id] || 0) : 0;
+    rows[t.id] = { id: t.id, p: 0, w: 0, d: 0, l: 0, gf: 0, ga: 0, pts: -ded, ded, form: [] };
   });
   results.forEach(r => {
     const h = rows[r.homeId], a = rows[r.awayId];
@@ -3123,6 +3222,7 @@ function _refreshLiveViews() {
   if (active('tab-matchweek'))                  renderMatchweekPage(_currentMW);
   if (active('tab-scout'))                      renderScout(_hullNextOpponent(), 'scout');
   if (active('tab-scoutpick'))                  renderScout(_scoutPicked || _hullNextOpponent(), 'scoutpick');
+  if (active('tab-live'))                       renderLiveFull();
 }
 
 // Caps how many of the currently-live matches _liveUnplayed hands to the
@@ -3202,13 +3302,70 @@ function renderLiveStrip() {
   }).join('');
 }
 
+// The Live tab: every match in progress right now, full detail — score,
+// win/draw/loss projected from here, live stats and lineups. Deliberately
+// separate from Matchweek's live card, which shows the same stats/lineups
+// but stops short of a probability (see _liveFixtureBody) so a fixture the
+// model is still "guessing" never sits next to the actual scoreline. Here
+// the probability IS the point, so it gets its own home instead.
+function renderLiveFull() {
+  const el = document.getElementById('live-full-list');
+  if (!el) return;
+  if (!_liveData.length) {
+    el.innerHTML = `<div class="empty-msg" style="padding:24px">No matches in progress right now.
+      This fills in automatically once a Premier League match kicks off.</div>`;
+    return;
+  }
+  el.innerHTML = _liveData.map(m => {
+    const h = teamMap[m.homeId], a = teamMap[m.awayId];
+    if (!h || !a) return '';
+    const o = liveOutcome(m);
+    const popped = _justScored.has(`${m.homeId}:${m.awayId}`);
+    const seg = (side, v) => `<div class="wdl-seg wdl-seg-${side}" style="flex:${v || 0.1}">${v >= 12 ? v + '%' : ''}</div>`;
+    return `
+      <div class="fixture-card fx-live">
+        <div class="fx-teams">
+          <div class="fx-team">
+            <div class="badge" style="background:${h.col};color:${h.txt};width:26px;height:26px;font-size:0.55rem;flex-shrink:0;${_crest(h.id)}"></div>
+            <div class="fx-name-col"><span class="fx-name">${h.name}</span></div>
+          </div>
+          <div class="fx-mid">
+            <div class="fx-score${popped ? ' fx-score-pop' : ''}">${m.homeGoals}–${m.awayGoals}</div>
+            <div class="fx-confirmed" style="color:#dc143c"><span class="lv-dot"></span> ${m.clock || 'LIVE'}</div>
+          </div>
+          <div class="fx-team away">
+            <div class="badge" style="background:${a.col};color:${a.txt};width:26px;height:26px;font-size:0.55rem;flex-shrink:0;${_crest(a.id)}"></div>
+            <div class="fx-name-col"><span class="fx-name">${a.name}</span></div>
+          </div>
+        </div>
+        <div class="wdl-bar" style="margin-top:10px">${seg('w', o.winPct)}${seg('d', o.drawPct)}${seg('l', o.lossPct)}</div>
+        <div class="fx-meta">
+          <strong style="color:#00ff85">${h.short} ${o.winPct}%</strong>
+          &nbsp;·&nbsp; Draw ${o.drawPct}%
+          &nbsp;·&nbsp; <strong style="color:#ff8a3d">${o.lossPct}% ${a.short}</strong>
+        </div>
+        <div class="fx-meta" style="opacity:.6;margin-top:2px">
+          projected from here, ~${o.elapsedMin}' played &nbsp;·&nbsp; pre-match xG ${o.hxgFull.toFixed(2)}–${o.axgFull.toFixed(2)}
+        </div>
+        <div class="lv-predict-row">
+          <div class="lv-predict-chip"><span>Likely final</span><strong>${o.likelyScore}</strong></div>
+          <div class="lv-predict-chip"><span>BTTS</span><strong>${o.bttsPct}%</strong></div>
+          <div class="lv-predict-chip"><span>Over 2.5</span><strong>${o.over25Pct}%</strong></div>
+        </div>
+        ${_liveFullBody(m, o.elapsedMin)}
+        <div class="lvs-note">Provisional — not saved. Re-projects the remaining minutes from
+          pre-match ATK/DEF on every update; does not yet account for red cards.</div>
+      </div>`;
+  }).join('');
+}
+
 function renderTable() {
   const form = _tableMode === 'form';
   // Live scores join the standings only in the full view: "form over the last
   // six" is a statement about finished matches.
   const live = form ? [] : _liveUnplayed();
   const base = form ? _formResults(6) : STATE.results;
-  const rows = buildTable(live.length ? base.concat(live) : base);
+  const rows = buildTable(live.length ? base.concat(live) : base, false, !form);
   const liveTeams = new Set(live.flatMap(m => [m.homeId, m.awayId]));
   // Where a team would sit without the match currently in progress, so the
   // movement it is causing is visible rather than implied.
@@ -3314,7 +3471,7 @@ function renderTable() {
       <td class="c hide-sm">${row.gf}</td>
       <td class="c hide-sm">${row.ga}</td>
       <td class="c ${gdClass}${gdChanged ? ' cell-flash' : ''}">${gdStr}</td>
-      <td class="c td-pts${ptsChanged ? ' cell-flash' : ''}">${row.pts}</td>
+      <td class="c td-pts${ptsChanged ? ' cell-flash' : ''}">${_ptsHTML(row)}</td>
       <td class="c hide-sm" style="color:var(--text-secondary);font-size:0.82rem">${proj ? proj[row.id] : '—'}</td>
       <td><div class="form-row">${formHtml}</div></td>
     `;
@@ -3521,6 +3678,7 @@ const _groupSub = Object.fromEntries(Object.entries(TAB_GROUPS).map(([g, s]) => 
 
 const TAB_INIT = {
   table:         () => { renderTable(); loadLive(); },
+  live:          () => { renderLiveFull(); loadLive(); },
   matchweek:     () => initMatchweek(),
   champanalysis: () => initAnalysisTab('champ'),
   planalysis:    () => { initAnalysisTab('pl'); loadPlayerRater(); },
@@ -3652,6 +3810,138 @@ function predictFixture(homeId, awayId, results) {
     hxg: hxg.toFixed(2),
     axg: axg.toFixed(2),
   };
+}
+
+// "45+2'00" -> 47. A clock label without a live clockSecs (older poll, or the
+// backend field missing) still parses into a usable minute.
+function _clockLabelMinutes(label) {
+  const m = /^(\d+)(?:\+(\d+))?/.exec(label || '');
+  if (!m) return 0;
+  return parseInt(m[1], 10) + (m[2] ? parseInt(m[2], 10) : 0);
+}
+
+// Win/draw/loss from THIS point in a live match: pre-match ATK/DEF give the
+// full-90 xG, scaled down to however much time is left, then combined with
+// the score already on the board — which is fixed, not modelled. Same
+// Dixon-Coles matrix as every other projection, just aimed at the remainder
+// of the match instead of all of it.
+//
+// Does not yet know about red cards — a sending-off should shift this hard
+// (see the fouls/cards analysis: a team down a man wins about half as often)
+// but there is no per-side man-count in the live feed to key that off yet.
+function liveOutcome(m) {
+  const h = getTeamRatings(m.homeId), a = getTeamRatings(m.awayId);
+  const hxgFull = (h.atk / LEAGUE_AVG) * a.def * HOME_ATK;
+  const axgFull = (a.atk / LEAGUE_AVG) * h.def * AWAY_ATK;
+
+  const elapsedMin = m.clockSecs != null ? m.clockSecs / 60 : _clockLabelMinutes(m.clock);
+  const remFrac = Math.max(0, Math.min(1, (90 - elapsedMin) / 90));
+  const hxgRem = Math.max(0.02, hxgFull * remFrac);
+  const axgRem = Math.max(0.02, axgFull * remFrac);
+
+  const mat = scoreMatrix(hxgRem, axgRem);
+  let hw = 0, dr = 0, aw = 0, btts = 0, over25 = 0, best = 0, bh = m.homeGoals, ba = m.awayGoals;
+  for (let i = 0; i <= MAX_GOALS; i++)
+    for (let j = 0; j <= MAX_GOALS; j++) {
+      const fh = m.homeGoals + i, fa = m.awayGoals + j, p = mat[i][j];
+      if (fh > fa) hw += p; else if (fh === fa) dr += p; else aw += p;
+      if (fh >= 1 && fa >= 1) btts += p;
+      if (fh + fa > 2.5) over25 += p;
+      if (p > best) { best = p; bh = fh; ba = fa; }
+    }
+  return {
+    winPct: Math.round(hw * 100), drawPct: Math.round(dr * 100), lossPct: Math.round(aw * 100),
+    bttsPct: Math.round(btts * 100), over25Pct: Math.round(over25 * 100),
+    likelyScore: `${bh}–${ba}`,
+    elapsedMin: Math.round(elapsedMin), hxgFull, axgFull,
+  };
+}
+
+// ═══════════════════════════════════════════════════
+// GAME PLAYER RATER — per-match, 1-10
+// ═══════════════════════════════════════════════════
+// What Pulse actually gives per match, per player: nothing continuous. No
+// passes, tackles, touches, duels — that only exists season-aggregated (see
+// pulse_players.py). What IS real per match: who started, who came on and
+// when, goals, assists, cards. So this is a rule-based score built from those
+// discrete events plus the team's own scoreline as shared context, not a
+// stats model — coarser than WhoScored/SofaScore, and most players who
+// touch none of those events will sit close to the team-context baseline
+// rather than being individually distinguished. Honest about that trade:
+// it's real data, just not deep data.
+//
+// elapsedMin is however much of the match has actually happened — 90 for a
+// finished game, the live clock otherwise — so a stoppage or a sub 10
+// minutes ago is judged against what has actually elapsed, not a fixed 90.
+function matchRating(m, elapsedMin) {
+  const lineup = m.lineup || {};
+  const events = m.events || [];
+  const teams  = Object.keys(lineup);
+  const out = {};   // playerId (string) -> record
+
+  const findName = (tid, pid) => {
+    for (const row of (lineup[tid] || [])) for (const p of row) if (String(p.id) === pid) return p.name;
+    return '?';
+  };
+
+  teams.forEach(tid => {
+    (lineup[tid] || []).forEach(row => row.forEach(p => {
+      const pid = String(p.id);
+      out[pid] = { id: pid, teamId: tid, name: p.name, sub: false,
+                   subbedOffAt: null, subbedOnAt: null,
+                   goals: 0, assists: 0, yellow: 0, red: 0 };
+    }));
+  });
+
+  events.forEach(e => {
+    const pid = String(e.playerId);
+    if (e.type === 'sub') {
+      const min = _clockLabelMinutes(e.clock);
+      if (e.dir === 'OFF' && out[pid]) out[pid].subbedOffAt = min;
+      if (e.dir === 'ON') {
+        if (!out[pid]) out[pid] = { id: pid, teamId: e.team, name: e.player, sub: true,
+                                     subbedOffAt: null, subbedOnAt: min,
+                                     goals: 0, assists: 0, yellow: 0, red: 0 };
+        else out[pid].subbedOnAt = min;
+      }
+      return;
+    }
+    if (!out[pid]) return;
+    if (e.type === 'goal') {
+      out[pid].goals++;
+      if (e.assistId != null) { const aid = String(e.assistId); if (out[aid]) out[aid].assists++; }
+    } else if (e.type === 'yellow') out[pid].yellow++;
+    else if (e.type === 'red') out[pid].red++;
+  });
+
+  const margin = {};
+  if (teams.length === 2) {
+    margin[m.homeId] = (m.homeGoals ?? 0) - (m.awayGoals ?? 0);
+    margin[m.awayId] = (m.awayGoals ?? 0) - (m.homeGoals ?? 0);
+  }
+
+  Object.values(out).forEach(p => {
+    const mins = p.sub
+      ? Math.max(0, elapsedMin - (p.subbedOnAt ?? elapsedMin))
+      : Math.max(0, Math.min(p.subbedOffAt ?? elapsedMin, elapsedMin));
+    p.mins = Math.round(mins);
+    if (mins <= 0) { p.rating = null; return; }   // an unused substitute
+    const minsFrac = Math.min(1, mins / 90);
+    const teamCtx  = Math.max(-0.8, Math.min(0.8, (margin[p.teamId] || 0) * 0.25)) * minsFrac;
+    const raw = 6.5 + teamCtx + p.goals * 1.3 + p.assists * 0.8 - p.yellow * 0.4 - p.red * 2.0;
+    p.rating = Math.max(1, Math.min(10, Math.round(raw * 10) / 10));
+  });
+
+  return out;
+}
+
+function _ratingColor(r) {
+  if (r == null) return 'rgba(255,255,255,0.18)';
+  if (r >= 8)   return '#00c853';
+  if (r >= 7)   return '#7cb342';
+  if (r >= 6)   return '#c9a227';
+  if (r >= 5)   return '#e07a3f';
+  return '#d9453f';
 }
 
 // ── Full-time analysis ─────────────────────────────────────────────────
@@ -5287,10 +5577,13 @@ let _lineupSeq = 0;
 function _lineupTeamHTML(teamId, rows) {
   const t = teamMap[teamId];
   if (!t || !rows || !rows.length) return '';
+  // A row entry is {id, name} from lineups.py, but kept string-tolerant —
+  // cheaper than a cache-shape migration for the one caller that predates it.
+  const nameOf = p => typeof p === 'string' ? p : p.name;
   return `<div class="md-lineup-team">
     <div class="md-lineup-name" style="color:${t.col}">${t.short}</div>
-    ${rows.map(row => `<div class="md-lineup-row">${row.map(name =>
-      `<span class="md-chip" style="border-color:${t.col}">${name}</span>`).join('')}</div>`).join('')}
+    ${rows.map(row => `<div class="md-lineup-row">${row.map(p =>
+      `<span class="md-chip" style="border-color:${t.col}">${nameOf(p)}</span>`).join('')}</div>`).join('')}
   </div>`;
 }
 
@@ -5320,8 +5613,12 @@ function _matchDetailHTML(homeId, awayId) {
   const hf = d.formations && d.formations[homeId];
   const af = d.formations && d.formations[awayId];
 
-  const timeline = (d.events || []).length
-    ? `<div class="md-timeline">${d.events.map(e => `
+  // Goals and cards only — subs ride along in d.events too (the rater needs
+  // them for minutes played) but six-a-side substitution spam is not a story
+  // worth telling here.
+  const timelineEvents = (d.events || []).filter(e => e.type !== 'sub');
+  const timeline = timelineEvents.length
+    ? `<div class="md-timeline">${timelineEvents.map(e => `
         <span class="md-ev md-ev-${e.team === homeId ? 'h' : 'a'}" title="${e.player}, ${e.clock}">
           ${MD_EVENT_ICON[e.type] || '·'} ${e.clock ? e.clock.replace("'00", "'") : ''} ${e.player}
         </span>`).join('')}</div>`
@@ -5397,6 +5694,62 @@ function _liveFixtureBody(m) {
       ${rows ? `<table class="pr-tbl lvs-tbl"><tbody class="stagger">${rows}</tbody></table>` : ''}
       ${lineups}
     </div>`;
+}
+
+// Live tab's version of the block above: full lineups laid out as a card,
+// not behind the "Lineups ▾" toggle _liveFixtureBody uses to stay compact on
+// Matchweek — this tab has the room, and lineups are most of the point of it.
+// A lineup chip with its match rating badge — home/away side, ratings from
+// matchRating() keyed by player id. Subs who actually came on are appended
+// below the starting rows since they have no formation slot of their own.
+function _ratedLineupTeamHTML(tid, rows, ratings) {
+  const t = teamMap[tid];
+  if (!t || !rows || !rows.length) return '';
+  const chip = (id, name) => {
+    const rec = ratings[String(id)];
+    const r = rec ? rec.rating : null;
+    const line = rec ? [`${rec.mins}'`, rec.goals ? `${rec.goals}G` : '', rec.assists ? `${rec.assists}A` : '',
+                        rec.yellow ? `${rec.yellow}Y` : '', rec.red ? `${rec.red}R` : '']
+                        .filter(Boolean).join(' · ') : '';
+    return `<span class="md-chip lv-rate-chip" style="border-color:${t.col}" title="${line}">
+      <span class="lv-rate-badge" style="background:${_ratingColor(r)}">${r != null ? r.toFixed(1) : '–'}</span>
+      ${name}
+    </span>`;
+  };
+  const subsUsed = Object.values(ratings).filter(p => p.teamId === tid && p.sub && p.mins > 0);
+  return `<div class="md-lineup-team">
+    <div class="md-lineup-name" style="color:${t.col}">${t.short}</div>
+    ${rows.map(row => `<div class="md-lineup-row">${row.map(p => chip(p.id, p.name)).join('')}</div>`).join('')}
+    ${subsUsed.length ? `<div class="md-lineup-row" style="margin-top:6px;opacity:.85">
+      ${subsUsed.map(p => chip(p.id, p.name)).join('')}
+    </div>` : ''}
+  </div>`;
+}
+
+function _liveFullBody(m, elapsedMin) {
+  const h = teamMap[m.homeId], a = teamMap[m.awayId];
+  const homeShape = m.formations && m.formations[m.homeId];
+  const awayShape = m.formations && m.formations[m.awayId];
+  const st = m.stats;
+  const rows = st ? _statBarRows(st.labels, st.home, st.away, STAT_INVERT) : '';
+  const hasLineup = m.lineup && ((m.lineup[m.homeId] || []).length || (m.lineup[m.awayId] || []).length);
+  const ratings = hasLineup ? matchRating(m, elapsedMin) : {};
+
+  return `
+    ${(homeShape || awayShape) ? `<div class="md-forms" style="margin-top:10px">
+      ${homeShape ? `<span class="fm-chip">${h.short} ${homeShape}</span>` : ''}
+      ${awayShape ? `<span class="fm-chip" style="opacity:0.6">${a.short} ${awayShape}</span>` : ''}
+    </div>` : ''}
+    ${rows ? `<table class="pr-tbl lvs-tbl" style="margin-top:8px"><tbody class="stagger">${rows}</tbody></table>` : ''}
+    ${hasLineup ? `
+      <div class="lv-lineup-hdr">Player ratings — out of 10</div>
+      <div class="lv-full-lineups">
+        ${_ratedLineupTeamHTML(m.homeId, m.lineup[m.homeId], ratings)}
+        ${_ratedLineupTeamHTML(m.awayId, m.lineup[m.awayId], ratings)}
+      </div>
+      <div class="lvs-note" style="margin-top:6px">Rule-based, from goals/assists/cards/minutes played and
+        the scoreline — Pulse has no per-player match stats to rate on, so a quiet performance with no card
+        or goal involvement sits close to the team's context score rather than being finely distinguished.</div>` : ''}`;
 }
 
 // ═══════════════════════════════════════════════════
@@ -5497,7 +5850,7 @@ function renderSimTable() {
       <td class="c hide-sm">${row.gf}</td>
       <td class="c hide-sm">${row.ga}</td>
       <td class="c ${gdClass}">${gdStr}</td>
-      <td class="c td-pts">${row.pts}</td>
+      <td class="c td-pts">${_ptsHTML(row)}</td>
       <td><div class="form-row">${formHtml}</div></td>
     `;
     tbody.appendChild(tr);
@@ -5762,7 +6115,7 @@ function drawChaosTable() {
 function _expectedOrder() {
   const played = playedSet();
   const pts = {}, gd = {};
-  TEAMS.forEach(t => { pts[t.id] = 0; gd[t.id] = 0; });
+  TEAMS.forEach(t => { pts[t.id] = -(POINT_DEDUCTIONS[t.id] || 0); gd[t.id] = 0; });
   STATE.results.forEach(r => {
     gd[r.homeId] += r.homeGoals - r.awayGoals;
     gd[r.awayId] += r.awayGoals - r.homeGoals;
@@ -5792,6 +6145,9 @@ function _mcWorkerSource() {
     ${poisson.toString()}
     ${gaussRand.toString()}
     ${teamSigma.toString()}
+    const POINT_DEDUCTIONS = ${JSON.stringify(POINT_DEDUCTIONS)};
+    const PTS_HIST_MIN = ${PTS_HIST_MIN}, PTS_HIST_LEN = ${PTS_HIST_LEN};
+    ${_ptsBin.toString()}
     ${buildTable.toString()}
     ${_chaosScore.toString()}
     onmessage = function (e) {
@@ -5808,7 +6164,7 @@ function _mcWorkerSource() {
       // survived when it did. Recording these here means the Survival tab no
       // longer needs a second simulation of its own.
       let survBase = 0, safetySum = 0;
-      const safetyHist = new Array(120).fill(0);
+      const safetyHist = new Array(PTS_HIST_LEN).fill(0);
       // Which teams go down IN THE SEASONS HULL SURVIVE — a different question
       // from each team's own unconditional relegation odds (already in
       // posCount): given Hull are safe, who typically isn't. Same pass, no
@@ -5849,7 +6205,7 @@ function _mcWorkerSource() {
         if (surv) { for (let i = 17; i < 20; i++) relWhenHullSurvives[tbl[i].id]++; }
         const sp = tbl[16].pts;
         safetySum += sp;
-        safetyHist[Math.min(119, Math.max(0, sp))]++;
+        safetyHist[_ptsBin(sp)]++;
         for (let i = 0; i < unplayed.length; i++) {
           const a = acc[i], o = outs[i];
           a.n[o]++; a.s[o] += surv;
@@ -5889,7 +6245,7 @@ function _mcParallel(total, base, played, unplayed, sigScale, expIdx, onProgress
 
       const acc = { posCount: {}, ptsSum: {}, ptsSqSum: {}, N: 0, chaos: null,
                     survBase: 0, safetySum: 0,
-                    safetyHist: new Array(120).fill(0),
+                    safetyHist: new Array(PTS_HIST_LEN).fill(0),
                     relWhenHullSurvives: {},
                     acc: unplayed.map(() => ({ n: { H: 0, D: 0, A: 0 }, s: { H: 0, D: 0, A: 0 } })) };
       TEAMS.forEach(t => { acc.posCount[t.id] = new Array(21).fill(0);
@@ -6078,8 +6434,10 @@ async function runMC() {
       team: t,
       dist: posCount[id].slice(1, 21).map(c => c / N),
       xpts: mean,
-      ptsLo: Math.max(0, Math.round(mean - 1.645 * sd)),
-      ptsHi: Math.min(114, Math.round(mean + 1.645 * sd)),
+      // Clamped to what is achievable: 0-114 earned, shifted down by any
+      // deduction — a docked club's floor is below zero, not at it.
+      ptsLo: Math.max(-(POINT_DEDUCTIONS[id] || 0), Math.round(mean - 1.645 * sd)),
+      ptsHi: Math.min(114 - (POINT_DEDUCTIONS[id] || 0), Math.round(mean + 1.645 * sd)),
       mlPos: ml,
       title: sumRange(id, 1, 1) / N * 100,
       cl:    sumRange(id, 1, 5) / N * 100,
@@ -6165,7 +6523,10 @@ function drawProjectedFinish(stat) {
   const wrap = document.getElementById('proj-wrap');
   if (!wrap) return;
   const rows = TEAMS.map(t => stat[t.id]).sort((a, b) => b.xpts - a.xpts);
-  const maxPts = Math.max(...rows.map(r => r.xpts));
+  // Floored at 1 so a league of docked-to-nothing clubs cannot divide by <= 0,
+  // and bar widths clamped at 0: an invalid negative CSS width is ignored,
+  // which renders the bar at FULL width — a club on -5 xPts would look top.
+  const maxPts = Math.max(1, ...rows.map(r => r.xpts));
 
   const distCells = (dist) => {
     const mx = Math.max(...dist);
@@ -6196,7 +6557,7 @@ function drawProjectedFinish(stat) {
         </div></td>
         <td style="text-align:center">
           <span style="font-weight:800">${r.xpts.toFixed(1)}</span>
-          <div class="xpts-bar" style="width:${r.xpts/maxPts*60}px"></div>
+          <div class="xpts-bar" style="width:${Math.max(0, r.xpts / maxPts * 60)}px"></div>
         </td>
         <td style="text-align:center;color:var(--text-secondary)">${r.ptsLo}–${r.ptsHi}</td>
         <td style="text-align:center">${r.mlPos}${r.mlPos===1?'st':r.mlPos===2?'nd':r.mlPos===3?'rd':'th'}</td>
@@ -6556,6 +6917,7 @@ async function syncResults(silent) {
     // time afterward, instead of one reorder mixing all of them together.
     const before = new Set(STATE.results.map(r => r.homeId + ':' + r.awayId));
     await loadState();
+    await loadDeductions();
     if (data.added) _invalidateAnalytics();   // new match → every analytics view is stale
     populateSelects(); renderResList(); renderStrTable(); updateFixtureBanner();
     if (data.added) await _replayTable(before); else renderTable();
@@ -7379,7 +7741,7 @@ function _survSetup() {
     sigScale: 0.85 + 0.45 * remFrac,
     firstMW: getCurrentMatchweek(),
     done: 0, survBase: 0, safetySum: 0,
-    safetyHist: new Array(120).fill(0),   // distribution of 17th-place points
+    safetyHist: new Array(PTS_HIST_LEN).fill(0),   // 17th-place points, offset by PTS_HIST_MIN
     acc: unplayed.map(() => ({ n: { H: 0, D: 0, A: 0 }, s: { H: 0, D: 0, A: 0 } })),
   };
 }
@@ -7415,7 +7777,7 @@ function _survBatch(st, count) {
     const surv = pos <= 17 ? 1 : 0;
     st.survBase += surv;
     st.safetySum += tbl[16].pts;          // 17th-place points (for the mean)
-    st.safetyHist[Math.min(119, Math.max(0, tbl[16].pts))]++;   // for the percentile
+    st.safetyHist[_ptsBin(tbl[16].pts)]++;   // for the percentile
     for (let i = 0; i < unplayed.length; i++) { const a = acc[i]; a.n[outs[i]]++; a.s[outs[i]] += surv; }
   }
   st.done += count;
@@ -7451,8 +7813,8 @@ function _survFinalize(st) {
   // the points total that proved enough to survive in ~75% of simulated seasons.
   const pctile = (q) => {
     let cum = 0, target = q * N;
-    for (let p = 0; p < st.safetyHist.length; p++) { cum += st.safetyHist[p]; if (cum >= target) return p; }
-    return st.safetyHist.length - 1;
+    for (let b = 0; b < st.safetyHist.length; b++) { cum += st.safetyHist[b]; if (cum >= target) return b + PTS_HIST_MIN; }
+    return st.safetyHist.length - 1 + PTS_HIST_MIN;
   };
   return { N, baseSurv, margin: m, teams,
            safetyLine: pctile(SAFETY_PCT),    // conservative survival mark (tunable percentile)
@@ -8033,6 +8395,17 @@ function initDashboard() { renderDashboard(); }
 // ═══════════════════════════════════════════════════
 (async () => {
   await loadState();
+  await loadDeductions();
+
+  // Deductions are edited in the admin panel, a different tab — so coming
+  // back to this one is the natural moment to check for a change.
+  window.addEventListener('focus', async () => {
+    if (!await loadDeductions()) return;
+    renderTable();
+    const active = document.querySelector('.section.active')?.id?.replace('tab-', '');
+    if (active && active !== 'table') TAB_INIT[active]?.();
+    toast('Points deductions changed — re-run the simulation to update the odds');
+  });
 
   // Always try to fetch or refresh official fixtures.
   // The server-side cache (24 h partial / 7 day full) prevents excessive

@@ -5,9 +5,11 @@ Newcache/
 
 # Local app state — rebuilt on first run; changes on every result entered.
 data.json
+deductions.json
 
 # Runtime / editor / tooling
 .server.pid
+app.log
 __pycache__/
 *.pyc
 .claude/

@@ -97,16 +97,19 @@ def fetch(season: str = "2627", force: bool = False) -> dict:
                 "pos":       {str(int(pl["id"])): pl.get("matchPosition")
                               for pl in (tl.get("lineup") or []) if pl.get("id")},
             })
-        # Goals and bookings — the fixture payload already carries a full
-        # events feed and this endpoint is being fetched anyway for the
+        # Goals, bookings and subs — the fixture payload already carries a
+        # full events feed and this endpoint is being fetched anyway for the
         # formation, so capturing it costs nothing extra. A finished match's
         # events do not change, unlike its live stat block, so this is fetched
-        # once and never revisited.
+        # once and never revisited. assistId (on goals) and S (subs) feed the
+        # per-match player rater; desc carries Y/R for a booking and ON/OFF
+        # for a sub.
         events = [
             {"type": e.get("type"), "teamId": e.get("teamId"),
-             "personId": e.get("personId"), "clock": (e.get("clock") or {}).get("label"),
+             "personId": e.get("personId"), "assistId": e.get("assistId"),
+             "clock": (e.get("clock") or {}).get("label"),
              "desc": e.get("description")}
-            for e in (fx.get("events") or []) if e.get("type") in ("G", "B")
+            for e in (fx.get("events") or []) if e.get("type") in ("G", "B", "S")
         ]
         cached[key] = {"sides": sides, "events": events, "players": players}
         fetched += 1
@@ -298,9 +301,10 @@ def _clock_key(event: dict) -> int:
 
 
 def _lineup_names(rec, names: dict) -> dict:
-    """Starting XI for each side, by internal team id, as last names grouped
-    into formation rows — the same rows slot_role reads, just with a name in
-    place of an id."""
+    """Starting XI for each side, by internal team id, as {id, name} pairs
+    grouped into formation rows — the same rows slot_role reads. The id rides
+    along with the last name so a consumer (the per-match player rater) can
+    match a lineup slot back to an events entry without a second lookup."""
     out = {}
     if not isinstance(rec, dict):
         return out
@@ -309,8 +313,8 @@ def _lineup_names(rec, names: dict) -> dict:
         tid = names.get(side.get("teamId"))
         if not tid:
             continue
-        out[tid] = [[(players.get(str(pid)) or "?").split()[-1] for pid in row]
-                    for row in side["rows"]]
+        out[tid] = [[{"id": pid, "name": (players.get(str(pid)) or "?").split()[-1]}
+                     for pid in row] for row in side["rows"]]
     return out
 
 
@@ -350,14 +354,21 @@ def match_details(season: str = "2627") -> dict:
                 players = rec.get("players", {})
                 for e in rec.get("events", []):
                     tid = names.get(e.get("teamId"))
-                    if not tid:
+                    if not tid or e.get("type") not in ("G", "B", "S"):
                         continue
+                    etype = ("goal" if e["type"] == "G" else
+                             "sub" if e["type"] == "S" else
+                             ("red" if e.get("desc") == "R" else "yellow"))
                     events.append({
-                        "type":   "goal" if e["type"] == "G" else
-                                  ("red" if e.get("desc") == "R" else "yellow"),
-                        "team":   tid,
-                        "player": players.get(str(e.get("personId"))) or "?",
-                        "clock":  e.get("clock"),
+                        "type":     etype,
+                        "team":     tid,
+                        "playerId": e.get("personId"),
+                        "player":   players.get(str(e.get("personId"))) or "?",
+                        # goal only: who teed it up. sub only: ON or OFF.
+                        "assistId": e.get("assistId") if e["type"] == "G" else None,
+                        "assist":   players.get(str(e.get("assistId"))) if e.get("assistId") else None,
+                        "dir":      e.get("desc") if e["type"] == "S" else None,
+                        "clock":    e.get("clock"),
                     })
                 events.sort(key=_clock_key)
 

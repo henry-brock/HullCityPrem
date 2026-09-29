@@ -28,7 +28,10 @@ Caching
 """
 
 import json
+import os
 import sys
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -42,7 +45,7 @@ from fixture_scraper import (
     _is_home,
     _name_to_id,
     _pulse_get,
-    _season_start_year,
+    _season_id_for_year,
     _team_name,
 )
 from scraper import SeasonNotAvailable   # shared exception → app.py handles both alike
@@ -73,14 +76,13 @@ def _season_year(season: str) -> int:
 
 def _find_season_id(year: int) -> int:
     """Locate the Pulse compSeason id for the PL season starting in `year`."""
-    data = _pulse_get(f"competitions/{PL_COMP_ID}/compseasons", pageSize=100)
-    for season in data.get("content", []):
-        if _season_start_year(season.get("label", "")) == year:
-            return int(season["id"])          # Pulse serialises ids as floats
-    raise SeasonNotAvailable(
-        f"The {year}/{str(year + 1)[2:]} Premier League season is not yet "
-        f"registered in the Pulse API."
-    )
+    sid = _season_id_for_year(year)          # disk-cached; see fixture_scraper
+    if sid is None:
+        raise SeasonNotAvailable(
+            f"The {year}/{str(year + 1)[2:]} Premier League season is not yet "
+            f"registered in the Pulse API."
+        )
+    return sid
 
 
 def _is_fresh(path: Path) -> bool:
@@ -154,18 +156,93 @@ def _side_stats(stats: dict | None) -> dict:
 
 # ── Core ────────────────────────────────────────────────────────────────
 
-def _settled(fixture: dict) -> bool:
-    """
-    True once Opta has stopped revising a match. Without this the first
-    (provisional) stat block fetched after the whistle would be cached
-    permanently, freezing possession and dropping late-arriving fields.
-    """
-    millis = (fixture.get("kickoff") or {}).get("millis") or 0
-    if not millis:
+# ── Shared per-match stat cache ─────────────────────────────────────────
+# One cache of Opta blocks per season, read by both this module's results
+# sync and newcache_builder. They used to fetch the same blocks into two
+# files independently, each re-reading every unsettled match on every run —
+# and a manual sync (force) re-read the ENTIRE season, 380 calls by May.
+#
+# Entry: {"blocks": {pulseTeamId: {stat: value}}, "at": epoch of the read}.
+# The timestamp is what makes "settled" mean something: a match is final when
+# its block was read AFTER it settled, not merely when the match is old. The
+# old rule froze whatever block happened to be cached on day 7, including a
+# provisional one read on day 1.
+STATS_REFRESH = timedelta(hours=6)     # how often an unsettled match is re-read
+STATS_DELAY   = 0.12                   # between reads — a rebuild walks ~380
+STATS_FLUSH   = 25                     # reads between saves, so a rebuild resumes
+_stats_lock   = threading.Lock()
+
+
+def _load_stats_cache(path: Path) -> dict:
+    try:
+        raw = json.loads(path.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+    # Pre-timestamp files stored bare blocks; wrap them with an unknown read time.
+    return {k: v if isinstance(v, dict) and "blocks" in v else {"blocks": v, "at": None}
+            for k, v in raw.items()}
+
+
+def _save_stats_cache(path: Path, cache: dict) -> None:
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(cache, indent=1), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _stats_due(entry: dict | None, kickoff_ms: float, now: float) -> bool:
+    if not entry or not entry.get("blocks"):
         return True
-    age = datetime.now(tz=timezone.utc) - datetime.fromtimestamp(millis / 1000,
-                                                                 tz=timezone.utc)
-    return age > timedelta(days=SETTLE_DAYS)
+    if not kickoff_ms:
+        return False                          # archive record: long settled
+    settled_at = kickoff_ms / 1000 + SETTLE_DAYS * 86400
+    at = entry.get("at")
+    if at is None:
+        # Read before timestamps existed. A settled one is kept, as it always
+        # was — re-reading a season of them would be hundreds of calls to
+        # correct a stat or two. An unsettled one is simply re-read.
+        return now < settled_at
+    if at >= settled_at:
+        return False                          # read after settling: final
+    if now >= settled_at:
+        return True                           # settled since last read: one final read
+    return now - at > STATS_REFRESH.total_seconds()
+
+
+def match_stats(fixtures: list[dict], season: str, force: bool = False,
+                seed: dict | None = None) -> tuple[dict, int]:
+    """({fixtureId: blocks}, requests made) for these completed fixtures.
+
+    Only blocks that are due (missing, unsettled and stale, or newly settled)
+    cost a request. `seed` offers blocks another cache already holds for keys
+    this one lacks — newcache_builder passes its archive in, so a season it
+    built before this cache existed is not re-downloaded wholesale.
+    `force` re-reads everything; that is a rebuild, not a refresh.
+    """
+    _, path = _cache_paths(season)
+    with _stats_lock:
+        cache = _load_stats_cache(path)
+        for key, blocks in (seed or {}).items():
+            if key not in cache and blocks:
+                cache[key] = {"blocks": blocks, "at": None}
+        now, fetched = time.time(), 0
+        for f in fixtures:
+            key = str(int(f["id"]))
+            ms = (f.get("kickoff") or {}).get("millis") or 0
+            if not force and not _stats_due(cache.get(key), ms, now):
+                continue
+            blocks = _fetch_match_stats(int(f["id"]))
+            fetched += 1
+            if blocks:
+                cache[key] = {"blocks": blocks, "at": now}
+            elif key not in cache:
+                cache[key] = {"blocks": {}, "at": None}   # failed: retried next run
+            if fetched % STATS_FLUSH == 0:
+                _save_stats_cache(path, cache)
+            time.sleep(STATS_DELAY)
+        if fetched or seed:
+            CACHE_DIR.mkdir(exist_ok=True)
+            _save_stats_cache(path, cache)
+    return {k: v["blocks"] for k, v in cache.items()}, fetched
 
 
 def _completed(raw: list[dict]) -> list[dict]:
@@ -261,8 +338,11 @@ def fetch(season: str = "2627", force: bool = False) -> list[dict]:
     An empty list means the season exists but no match has finished yet.
     """
     CACHE_DIR.mkdir(exist_ok=True)
-    results_path, stats_path = _cache_paths(season)
+    results_path, _ = _cache_paths(season)
 
+    # force skips the results TTL — a manual sync wants the latest scores now
+    # — but NOT the stat cache: re-reading every settled match to pick up one
+    # new result was the single most expensive thing this app did.
     if not force and _is_fresh(results_path):
         print(f"[pulse_results] Using cached results: {results_path}", file=sys.stderr)
         return json.loads(results_path.read_text())["matches"]
@@ -270,31 +350,18 @@ def fetch(season: str = "2627", force: bool = False) -> list[dict]:
     season_id = _find_season_id(_season_year(season))
     print(f"[pulse_results] Fetching {season} results (compSeason {season_id})…", file=sys.stderr)
 
-    played = _completed(_fetch_all(season_id))
+    played = _completed(_fetch_all(season_id, statuses=STATUS_COMPLETED))
 
-    # Per-fixture stats cache. A finished match is NOT immutable: Opta keeps
-    # revising it for a day or two, re-deriving possession and adding late
-    # fields such as clean_sheet. So blocks are re-fetched until the match is
-    # SETTLE_DAYS old, and only then treated as final.
-    try:
-        stats_cache = json.loads(stats_path.read_text()) if stats_path.exists() else {}
-    except json.JSONDecodeError:
-        stats_cache = {}
-
-    fetched = 0
-    for fixture in played:
-        key = str(int(fixture["id"]))
-        if force or key not in stats_cache or not _settled(fixture):
-            stats_cache[key] = _fetch_match_stats(int(fixture["id"]))
-            fetched += 1
-
+    # A finished match is NOT immutable: Opta keeps revising it for a day or
+    # two, re-deriving possession and adding late fields such as clean_sheet.
+    # match_stats re-reads a block until one has been read after it settled.
+    stats, fetched = match_stats(played, season)
     if fetched:
-        stats_path.write_text(json.dumps(stats_cache, indent=2), encoding="utf-8")
-        print(f"[pulse_results] Fetched stats for {fetched} new match(es).", file=sys.stderr)
+        print(f"[pulse_results] Fetched stats for {fetched} match(es).", file=sys.stderr)
 
     matches = []
     for fixture in played:
-        record = _parse(fixture, stats_cache.get(str(int(fixture["id"])), {}))
+        record = _parse(fixture, stats.get(str(int(fixture["id"])), {}))
         if record:
             matches.append(record)
 

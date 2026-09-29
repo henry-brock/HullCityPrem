@@ -123,29 +123,59 @@ def _is_home(entry: dict, index: int) -> bool:
 
 # ── Core ─────────────────────────────────────────────────────────────────
 
-def _find_season_id() -> int:
+SEASON_IDS = CACHE_DIR / "season_ids.json"
+
+
+def _season_id_for_year(year: int) -> int | None:
+    """Pulse compSeason id for the PL season starting in `year`, or None if
+    Pulse has not registered it yet.
+
+    Cached on disk for good: a compSeason id never changes once issued, yet
+    every live poll, sync and rating used to look it up afresh. A miss is not
+    cached — "not registered yet" is exactly the answer that changes.
+    """
+    try:
+        known = json.loads(SEASON_IDS.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        known = {}
+    if str(year) in known:
+        return int(known[str(year)])
+
     data = _pulse_get(f"competitions/{PL_COMP_ID}/compseasons", pageSize=100)
     for s in data.get("content", []):
-        if _season_start_year(s.get("label", "")) == TARGET_YEAR:
-            return int(s["id"])
-    raise FixturesNotAvailable(
-        "The 2026/27 Premier League season is not yet registered in the "
-        "Pulse API — fixture list will appear once the season is set up."
-    )
+        y = _season_start_year(s.get("label", ""))
+        if y:
+            known[str(y)] = int(s["id"])        # every season in the reply, not just this one
+    CACHE_DIR.mkdir(exist_ok=True)
+    SEASON_IDS.write_text(json.dumps(known, indent=1, sort_keys=True))
+    return known.get(str(year))
 
 
-def _fetch_all(season_id: int) -> list[dict]:
-    """Page through the fixtures endpoint and return all raw fixture dicts."""
+def _find_season_id() -> int:
+    sid = _season_id_for_year(TARGET_YEAR)
+    if sid is None:
+        raise FixturesNotAvailable(
+            "The 2026/27 Premier League season is not yet registered in the "
+            "Pulse API — fixture list will appear once the season is set up."
+        )
+    return sid
+
+
+def _fetch_all(season_id: int, statuses: str | None = None) -> list[dict]:
+    """Raw fixture dicts for a season, optionally only those with a given
+    status ("L" live, "C" complete, "U" upcoming; comma-separate for several).
+
+    The status filter runs on Pulse's side, so asking "is anything live?"
+    costs one small request instead of listing all 380 fixtures. pageSize=400
+    returns a whole season in one reply where 100 needed four; the loop stays
+    in case Pulse ever caps it lower.
+    """
+    params = {"comps": PL_COMP_ID, "compSeasons": season_id, "pageSize": 400, "sort": "asc"}
+    if statuses:
+        params["statuses"] = statuses
     fixtures, page = [], 0
     while True:
-        data = _pulse_get(
-            "fixtures",
-            comps=PL_COMP_ID,
-            compSeasons=season_id,
-            page=page,
-            pageSize=100,
-            sort="asc",
-        )
+        data = _pulse_get("fixtures", page=page, **params)
         content = data.get("content", [])
         if not content:
             break

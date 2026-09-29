@@ -19,37 +19,19 @@ Output is deliberately shaped like the ESPN player records the Squad Analysis
 tab already renders (camelCase keys under `stats`), so the frontend needs no
 special-casing — the same table, sorting and position composites work.
 
-Cache: cache/pulse_players_<season>.json, 6h TTL (a live season changes).
+No cache of its own: Hull's rows are filtered out of pl_players' league pool,
+which is where the fetching, caching and TTL live.
 """
 
-import json
 import sys
-from datetime import datetime, timedelta
-from pathlib import Path
 
 import requests
 
 from fixture_scraper import _pulse_get
-from pulse_results import _find_season_id, _season_year
 
-ROOT      = Path(__file__).parent
-CACHE_DIR = ROOT / "cache"
-CACHE_TTL = timedelta(hours=6)
-
-PL_COMP_ID   = 1
-HULL_PULSE_ID = 41          # Hull City's Premier League team id
+PL_COMP_ID = 1
 
 POS_MAP = {"G": "G", "D": "D", "M": "M", "F": "F"}
-
-
-def _cache_path(season: str) -> Path:
-    return CACHE_DIR / f"pulse_players_{season}.json"
-
-
-def _is_fresh(path: Path) -> bool:
-    if not path.exists():
-        return False
-    return datetime.now() - datetime.fromtimestamp(path.stat().st_mtime) < CACHE_TTL
 
 
 def _g(stats: dict, name: str) -> float:
@@ -160,14 +142,6 @@ def _map_stats(s: dict) -> dict:
     return out
 
 
-def _squad(season_id: int) -> list[dict]:
-    data = _pulse_get(
-        f"teams/{HULL_PULSE_ID}/compseasons/{season_id}/staff",
-        pageSize=100, compSeasons=season_id,
-    )
-    return data.get("players", []) or []
-
-
 def _player_stats(player_id: int, season_id: int) -> dict:
     try:
         data = _pulse_get(f"stats/player/{player_id}",
@@ -185,40 +159,31 @@ def fetch(season: str = "2627", force: bool = False) -> dict:
     Players with no recorded minutes are still included — the frontend filters
     on minutes itself, and knowing who is in the squad but unused is useful.
     """
-    CACHE_DIR.mkdir(exist_ok=True)
-    path = _cache_path(season)
-    if not force and _is_fresh(path):
-        print(f"[pulse_players] using cached {path}", file=sys.stderr)
-        return json.loads(path.read_text())
+    # Hull's players are a subset of pl_players' league-wide pool, fetched by
+    # the very same _map_stats(_player_stats(...)) call — so this is a filter,
+    # not a second download. It used to make its own ~35 requests every six
+    # hours, including one for each unused squad member, for data the pool
+    # already held.
+    from pl_players import fetch as fetch_pool     # local: pl_players imports this module
 
-    season_id = _find_season_id(_season_year(season))
-    squad     = _squad(season_id)
-    print(f"[pulse_players] {len(squad)} players in Hull's {season} PL squad",
-          file=sys.stderr)
+    pool = fetch_pool(season=season, force=force)
+    players = [{
+        "id":    p["id"],
+        "name":  p["name"],
+        "pos":   POS_MAP.get(p.get("pos"), p.get("pos") or ""),
+        "shirt": p.get("shirt"),
+        # The pool stores unused players as a bare {appearances, minutes};
+        # this tab expects every stat key, so give them the full zeroed set.
+        "stats": p["stats"] if (p["stats"].get("appearances") or 0) > 0 else _map_stats({}),
+    } for p in pool["players"] if p.get("team") == "hull"]
 
-    players = []
-    for p in squad:
-        pid  = int(p["id"])                     # Pulse serialises ids as floats
-        info = p.get("info") or {}
-        raw  = _player_stats(pid, season_id)
-        players.append({
-            "id":     pid,
-            "name":   (p.get("name") or {}).get("display") or "",
-            "pos":    POS_MAP.get(info.get("position"), info.get("position") or ""),
-            "shirt":  info.get("shirtNum"),
-            "stats":  _map_stats(raw),
-        })
-
-    payload = {
+    return {
         "team":    "Hull City",
         "season":  season,
-        "source":  f"Pulse API (compSeason {season_id})",
-        "fetched": datetime.now().isoformat(),
+        "source":  "Pulse API (via the league player pool)",
+        "fetched": pool.get("fetched"),
         "players": players,
     }
-    path.write_text(json.dumps(payload, indent=1), encoding="utf-8")
-    print(f"[pulse_players] cached {len(players)} players → {path}", file=sys.stderr)
-    return payload
 
 
 if __name__ == "__main__":
