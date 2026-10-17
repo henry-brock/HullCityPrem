@@ -2874,9 +2874,8 @@ function computeAllProjections() {
     if (played.has(f.homeId + ':' + f.awayId)) return;
     const h   = ratings[f.homeId];
     const a   = ratings[f.awayId];
-    const hxg = (h.atk / LEAGUE_AVG) * a.def * HOME_ATK;
-    const axg = (a.atk / LEAGUE_AVG) * h.def * AWAY_ATK;
-    const { homeWin, draw } = matrixOutcome(scoreMatrix(Math.max(0.05, hxg), Math.max(0.05, axg)));
+    const [hxg, axg] = matchXG(h, a);
+    const { homeWin, draw } = matrixOutcome(scoreMatrix(hxg, axg));
     proj[f.homeId] += homeWin * 3 + draw;
     proj[f.awayId] += (1 - homeWin - draw) * 3 + draw;
   });
@@ -2902,6 +2901,57 @@ let HOME_ATK   = 1.11;   // home-team attack multiplier
 let AWAY_ATK   = 0.89;   // away-team attack multiplier
 const HOME_ADV   = 1.16;   // legacy single factor (kept for reference)
 let DC_RHO     = -0.13;  // Dixon-Coles low-score correlation (tuned)
+// Two scorelines the PL produces more often than the model predicts, each
+// one the only correction in its test to improve both held-out seasons
+// (scoreline_backtest.py --attribute / --candidates). Applied to the FINAL
+// score, before renormalising; fitted together on 2024/25 + 2025/26.
+//  2-2 — under-predicted every season on record (7.1/8.2/6.8% vs ~4.7%),
+//        unlike 0-0, which swings 3-10%.
+//  0-1 — under-predicted every season (6.8/8.2/11.8%). Dixon-Coles trims it
+//        by ~20% for a typical home side; this roughly hands that back. Its
+//        mirror 1-0 goes the other way, so the two are NOT treated alike.
+let TWO_TWO_BOOST  = 1.42;
+let ZERO_ONE_BOOST = 1.18;
+function _scoreBoost(i, j) {
+  return i === 2 && j === 2 ? TWO_TWO_BOOST : i === 0 && j === 1 ? ZERO_ONE_BOOST : 1;
+}
+
+// The model expected bigger mismatches than the PL delivers. Across 811
+// matches favourites won less often than predicted at every confidence
+// level; in the biggest mismatches the stronger side scored 2.09 against 2.62
+// expected, and hammerings (a side scoring 4+) came in at 12.5% against 27.2%.
+// Multiplying an attack by the opponent's defence stretches a gap further
+// than real football does. So each side's expected goals is pulled toward
+// that side's league mean — geometrically, so the mean stays put:
+//   xG' = mean × (xG / mean)^MISMATCH_DAMPING
+// 0.80 sits in the flat optimum of 2025/26 and improved both held-out
+// seasons on exact-score, W/D/L and RPS (scoreline_backtest.py --dampen).
+let MISMATCH_DAMPING = 0.80;
+
+// THE one place ratings become expected goals. Predictions, the Live tab,
+// projections and every simulation call this, so they cannot disagree about
+// how far apart two teams are.
+function matchXG(h, a) {
+  const hm = LEAGUE_AVG * HOME_ATK, am = LEAGUE_AVG * AWAY_ATK;
+  const hx = Math.max(0.05, (h.atk / LEAGUE_AVG) * a.def * HOME_ATK);
+  const ax = Math.max(0.05, (a.atk / LEAGUE_AVG) * h.def * AWAY_ATK);
+  return [hm * Math.pow(hx / hm, MISMATCH_DAMPING), am * Math.pow(ax / am, MISMATCH_DAMPING)];
+}
+
+// Season-simulation sampler: independent Poisson goals (fast — no 121-cell
+// matrix per match per season), with the 2-2 and 0-1 boosts applied EXACTLY
+// by mixture: with probability w/(1+w) emit the boosted score outright, else
+// draw normally. P(2-2) comes out at boost×p22/Z, same as scoreMatrix's
+// renormalised cell. Costs ~3% on a 10k run (measured).
+function sampleScoreFast(hxg, axg) {
+  const e = Math.exp(-hxg - axg);
+  const w22 = (TWO_TWO_BOOST - 1) * e * hxg * hxg * axg * axg / 4;
+  const w01 = (ZERO_ONE_BOOST - 1) * e * axg;
+  const u = Math.random() * (1 + w22 + w01);
+  if (u < w22) return [2, 2];
+  if (u < w22 + w01) return [0, 1];
+  return [poisson(hxg), poisson(axg)];
+}
 const MAX_GOALS  = 10;     // score-matrix truncation
 
 // Opponent-strength adjustment of actual form. The backtest found this
@@ -2938,7 +2988,9 @@ function gaussRand() {
 // returned as a normalised (MAX_GOALS+1)² matrix. The ρ term nudges the four
 // lowest scorelines so the model reproduces real draw frequency better than
 // independent Poisson.
-function scoreMatrix(hxg, axg) {
+// boosts=false is for a matrix of goals STILL TO COME (the Live tab): "two
+// more each" is not a 2-2, so the final-score boosts are applied there instead.
+function scoreMatrix(hxg, axg, boosts = true) {
   const ph = [], pa = [];
   for (let k = 0; k <= MAX_GOALS; k++) { ph.push(poissonPMF(k, hxg)); pa.push(poissonPMF(k, axg)); }
   const m = [];
@@ -2953,6 +3005,7 @@ function scoreMatrix(hxg, axg) {
         else if (i === 1 && j === 0) p *= Math.max(0, 1 + axg * DC_RHO);
         else if (i === 1 && j === 1) p *= Math.max(0, 1 - DC_RHO);
       }
+      if (boosts) p *= _scoreBoost(i, j);
       m[i].push(p);
       total += p;
     }
@@ -3003,6 +3056,29 @@ function computeStrength(atk, def) {
 // `results` defaults to the live state, but callers can pass a subset — the
 // full-time panel needs each team's rating as it stood BEFORE a given match,
 // otherwise "how likely was this result" is scored using the result itself.
+// Share of a team's rating that comes from its actual results after n games
+// (the rest is its pre-season prior). Shared by getTeamRatings and teamSigma,
+// so the prior's weight and the doubt about the prior fade on ONE curve.
+//
+// Promoted sides (low-confidence prior) shed it faster: 80 % cap vs 65 %.
+//
+// Smoothstep ramp: the weight given to actual results eases in from game one
+// and reaches the cap at game 10, then holds.
+//
+// This replaces `n < 3 ? prior : min(n/12, cap)`, which had a cliff — a side
+// was rated on its pure prior for two games and then jumped straight to 25%
+// actuals on the third. For Hull that single step was worth 0.49 of defence
+// rating and moved their relegation probability by 28 points, which is a
+// threshold artefact rather than the model learning something.
+//
+// Smoothstep has zero slope at both ends: no jolt from the first result
+// (2% weight), and no corner where it meets the cap at game 10.
+function _resultsWeight(teamId, n) {
+  const cap = PROMOTED_SIGMA[teamId] ? 0.80 : 0.65;
+  const t = Math.min(1, n / 10);
+  return cap * t * t * (3 - 2 * t);
+}
+
 function getTeamRatings(teamId, results) {
   const team  = teamMap[teamId];
   const src   = results || STATE.results;
@@ -3034,22 +3110,7 @@ function getTeamRatings(teamId, results) {
   const actualAtk = atkSum / wTotal;
   const actualDef = defSum / wTotal;
 
-  // Promoted sides (low-confidence prior) shed it faster: 80 % cap vs 65 %.
-  const cap = PROMOTED_SIGMA[teamId] ? 0.80 : 0.65;
-
-  // Smoothstep ramp: the weight given to actual results eases in from game one
-  // and reaches the cap at game 10, then holds.
-  //
-  // This replaces `n < 3 ? prior : min(n/12, cap)`, which had a cliff — a side
-  // was rated on its pure prior for two games and then jumped straight to 25%
-  // actuals on the third. For Hull that single step was worth 0.49 of defence
-  // rating and moved their relegation probability by 28 points, which is a
-  // threshold artefact rather than the model learning something.
-  //
-  // Smoothstep has zero slope at both ends: no jolt from the first result
-  // (2% weight), and no corner where it meets the cap at game 10.
-  const t = Math.min(1, n / 10);
-  const blend = cap * t * t * (3 - 2 * t);
+  const blend = _resultsWeight(teamId, n);
   return {
     atk: team.baseAtk * (1 - blend) + actualAtk * blend,
     def: team.baseDef * (1 - blend) + actualDef * blend,
@@ -3061,8 +3122,7 @@ function getTeamRatings(teamId, results) {
 function simMatch(homeId, awayId) {
   const h = getTeamRatings(homeId);
   const a = getTeamRatings(awayId);
-  const hxg = (h.atk / LEAGUE_AVG) * a.def * HOME_ATK;
-  const axg = (a.atk / LEAGUE_AVG) * h.def * AWAY_ATK;
+  const [hxg, axg] = matchXG(h, a);
   return sampleScore(hxg, axg);
 }
 
@@ -3759,8 +3819,7 @@ function getCurrentMatchweek() {
 // up the tail). Cells shaded by probability, most-likely outlined.
 function scoreGridHTML(homeId, awayId, compact) {
   const h = getTeamRatings(homeId), a = getTeamRatings(awayId);
-  const hxg = Math.max(0.05, (h.atk / LEAGUE_AVG) * a.def * HOME_ATK);
-  const axg = Math.max(0.05, (a.atk / LEAGUE_AVG) * h.def * AWAY_ATK);
+  const [hxg, axg] = matchXG(h, a);
   const mat = scoreMatrix(hxg, axg);
   const G = 5;
   const m2 = Array.from({ length: G + 1 }, () => new Array(G + 1).fill(0));
@@ -3790,12 +3849,11 @@ function scoreGridHTML(homeId, awayId, compact) {
 function predictFixture(homeId, awayId, results) {
   const h   = getTeamRatings(homeId, results);
   const a   = getTeamRatings(awayId, results);
-  const hxg = (h.atk / LEAGUE_AVG) * a.def * HOME_ATK;
-  const axg = (a.atk / LEAGUE_AVG) * h.def * AWAY_ATK;
+  const [hxg, axg] = matchXG(h, a);
 
   // Exact outcome probabilities + most-likely scoreline straight from the
   // Dixon-Coles matrix — no sampling noise, and consistent with the MC.
-  const m = scoreMatrix(Math.max(0.05, hxg), Math.max(0.05, axg));
+  const m = scoreMatrix(hxg, axg);
   const { homeWin, draw, awayWin } = matrixOutcome(m);
   let best = 0, bi = 0, bj = 0;
   for (let i = 0; i <= MAX_GOALS; i++)
@@ -3820,9 +3878,33 @@ function _clockLabelMinutes(label) {
   return parseInt(m[1], 10) + (m[2] ? parseInt(m[2], 10) : 0);
 }
 
+// Stoppage time, measured, not assumed. A match is ~99 minutes, not 90:
+// 2026/27's 55 completed matches averaged 90+6.2 at full time (range 3-10),
+// and a sample of half-time whistles averaged 45+2.9. Goals arrive in it at
+// the ordinary rate — 6.2% of four seasons' goals came after 90:00, against
+// 6.2% of the playing time — so the remaining-time scaling simply has to
+// count it. It used to stop the match at 90:00: with Ipswich 0-1 down at 87'
+// against Fulham it gave them a 0.11% chance of winning; counting the time
+// actually played, 0.80%. They scored at 88' and 90+1'.
+const FIRST_HALF_ADDED  = 2.9;
+const SECOND_HALF_ADDED = 6.2;
+const MATCH_MINUTES     = 90 + FIRST_HALF_ADDED + SECOND_HALF_ADDED;
+
+// Minutes still to play. Pulse restarts the clock at 45:00 for the second
+// half, so first-half stoppage is invisible from the clock alone — phase
+// says which half a 45+ reading belongs to. Past the average stoppage, a
+// minute is assumed left rather than none: the whistle has not gone yet.
+function _minutesLeft(elapsed, phase) {
+  const firstHalf = phase === '1' || (phase !== '2' && phase !== 'H' && elapsed < 45);
+  if (firstHalf) return Math.max(45 + FIRST_HALF_ADDED - elapsed, 1) + 45 + SECOND_HALF_ADDED;
+  if (phase === 'H') return 45 + SECOND_HALF_ADDED;
+  return Math.max(90 + SECOND_HALF_ADDED - elapsed, 1);
+}
+
 // Win/draw/loss from THIS point in a live match: pre-match ATK/DEF give the
-// full-90 xG, scaled down to however much time is left, then combined with
-// the score already on the board — which is fixed, not modelled. Same
+// whole-match xG — stoppage included, since it was fitted on final scores —
+// scaled to the share of the match still to play, then combined with the
+// score already on the board, which is fixed, not modelled. Same
 // Dixon-Coles matrix as every other projection, just aimed at the remainder
 // of the match instead of all of it.
 //
@@ -3831,24 +3913,29 @@ function _clockLabelMinutes(label) {
 // but there is no per-side man-count in the live feed to key that off yet.
 function liveOutcome(m) {
   const h = getTeamRatings(m.homeId), a = getTeamRatings(m.awayId);
-  const hxgFull = (h.atk / LEAGUE_AVG) * a.def * HOME_ATK;
-  const axgFull = (a.atk / LEAGUE_AVG) * h.def * AWAY_ATK;
+  const [hxgFull, axgFull] = matchXG(h, a);
 
   const elapsedMin = m.clockSecs != null ? m.clockSecs / 60 : _clockLabelMinutes(m.clock);
-  const remFrac = Math.max(0, Math.min(1, (90 - elapsedMin) / 90));
+  const remFrac = Math.max(0, Math.min(1, _minutesLeft(elapsedMin, m.phase) / MATCH_MINUTES));
   const hxgRem = Math.max(0.02, hxgFull * remFrac);
   const axgRem = Math.max(0.02, axgFull * remFrac);
 
-  const mat = scoreMatrix(hxgRem, axgRem);
-  let hw = 0, dr = 0, aw = 0, btts = 0, over25 = 0, best = 0, bh = m.homeGoals, ba = m.awayGoals;
+  // Goals still to come, unboosted; the scoreline boosts belong on the FINAL
+  // score, so they are applied below once the current score is added — at
+  // 0-0 with the whole match left, that is exactly the pre-match prediction.
+  const mat = scoreMatrix(hxgRem, axgRem, false);
+  let hw = 0, dr = 0, aw = 0, btts = 0, over25 = 0, best = 0, tot = 0, bh = m.homeGoals, ba = m.awayGoals;
   for (let i = 0; i <= MAX_GOALS; i++)
     for (let j = 0; j <= MAX_GOALS; j++) {
-      const fh = m.homeGoals + i, fa = m.awayGoals + j, p = mat[i][j];
+      const fh = m.homeGoals + i, fa = m.awayGoals + j;
+      const p = mat[i][j] * _scoreBoost(fh, fa);
+      tot += p;
       if (fh > fa) hw += p; else if (fh === fa) dr += p; else aw += p;
       if (fh >= 1 && fa >= 1) btts += p;
       if (fh + fa > 2.5) over25 += p;
       if (p > best) { best = p; bh = fh; ba = fa; }
     }
+  hw /= tot; dr /= tot; aw /= tot; btts /= tot; over25 /= tot;
   return {
     winPct: Math.round(hw * 100), drawPct: Math.round(dr * 100), lossPct: Math.round(aw * 100),
     bttsPct: Math.round(btts * 100), over25Pct: Math.round(over25 * 100),
@@ -3970,8 +4057,7 @@ function _resultsBefore(key) {
 // score" says a lot more than the win/draw/loss split alone.
 function _exactScore(homeId, awayId, hg, ag, results) {
   const h = getTeamRatings(homeId, results), a = getTeamRatings(awayId, results);
-  const m = scoreMatrix(Math.max(0.05, (h.atk / LEAGUE_AVG) * a.def * HOME_ATK),
-                        Math.max(0.05, (a.atk / LEAGUE_AVG) * h.def * AWAY_ATK));
+  const m = scoreMatrix(...matchXG(h, a));
   // Scores beyond the truncation are vanishingly rare; clamp so a 7-0 still
   // resolves to a cell rather than reading as undefined.
   const i = Math.min(hg, MAX_GOALS), j = Math.min(ag, MAX_GOALS);
@@ -3992,8 +4078,7 @@ function _ord(n) {
 // "what if this had been a draw" without inventing an arbitrary score.
 function _representativeScore(homeId, awayId, outcome, results) {
   const h = getTeamRatings(homeId, results), a = getTeamRatings(awayId, results);
-  const m = scoreMatrix(Math.max(0.05, (h.atk / LEAGUE_AVG) * a.def * HOME_ATK),
-                        Math.max(0.05, (a.atk / LEAGUE_AVG) * h.def * AWAY_ATK));
+  const m = scoreMatrix(...matchXG(h, a));
   let best = -1, bi = 0, bj = 0;
   for (let i = 0; i <= MAX_GOALS; i++)
     for (let j = 0; j <= MAX_GOALS; j++) {
@@ -4053,9 +4138,8 @@ function _resultImpact(key, N, pr) {
     });
     const rest = unplayed.map(f => {
       const h = r[f.homeId], a = r[f.awayId];
-      return { homeId: f.homeId, awayId: f.awayId,
-        homeGoals: poisson(Math.max(0.05, (h.atk / LEAGUE_AVG) * a.def * HOME_ATK)),
-        awayGoals: poisson(Math.max(0.05, (a.atk / LEAGUE_AVG) * h.def * AWAY_ATK)) };
+      const [hg, ag] = sampleScoreFast(...matchXG(h, a));
+      return { homeId: f.homeId, awayId: f.awayId, homeGoals: hg, awayGoals: ag };
     });
     const ind = {};
     outcomes.forEach(o => {
@@ -5945,8 +6029,34 @@ const PROMOTED_SIGMA = { hull: 1.45, ipswich: 1.20, coventry: 1.15 };
 // small: Sunderland's relegation odds move ~+0.9pp, everyone else <1pp.
 const THIN_PRIOR_SIGMA = { sunderland: 1.15, leeds: 1.15 };
 
+// The extra noise above is doubt about the PRIOR, so it shrinks as the prior
+// does: multiplier = 1 + (m − 1) × the prior's remaining share of the rating.
+// Hull start at ×1.45 and settle at ~×1.09 once results carry 80% of the
+// rating (game 10); Sunderland/Leeds at ~×1.05. Holding ×1.45 all season
+// made a promoted side more unpredictable than its own evidence justified —
+// with Hull projected safely above the line, worth ~5pp of relegation odds.
+function sigmaMultipliers(results) {
+  const n = {};
+  results.forEach(r => { n[r.homeId] = (n[r.homeId] || 0) + 1; n[r.awayId] = (n[r.awayId] || 0) + 1; });
+  const out = {};
+  TEAMS.forEach(t => {
+    const m = PROMOTED_SIGMA[t.id] || THIN_PRIOR_SIGMA[t.id] || 1.0;
+    out[t.id] = 1 + (m - 1) * (1 - _resultsWeight(t.id, n[t.id] || 0));
+  });
+  return out;
+}
+
+// Called per team per simulated season, so the multipliers are memoised on
+// the results they were built from (array identity AND length — a hand-entered
+// result is a push onto the same array). Inside a worker there is no STATE:
+// _sigmaMult arrives pre-computed in the worker source instead.
+let _sigmaMult = null, _sigmaFor = null, _sigmaLen = -1;
 function teamSigma(id) {
-  const m = PROMOTED_SIGMA[id] || THIN_PRIOR_SIGMA[id] || 1.0;
+  if (typeof STATE !== 'undefined' && (_sigmaFor !== STATE.results || _sigmaLen !== STATE.results.length)) {
+    _sigmaMult = sigmaMultipliers(STATE.results);
+    _sigmaFor = STATE.results; _sigmaLen = STATE.results.length;
+  }
+  const m = (_sigmaMult && _sigmaMult[id]) || 1.0;
   return { form: SIGMA_FORM * m, ind: SIGMA_IND * m };
 }
 
@@ -6139,10 +6249,13 @@ function _mcWorkerSource() {
     const TEAMS = ${JSON.stringify(TEAMS)};
     const teamMap = Object.fromEntries(TEAMS.map(t => [t.id, t]));
     const LEAGUE_AVG = ${LEAGUE_AVG}, HOME_ATK = ${HOME_ATK}, AWAY_ATK = ${AWAY_ATK};
+    const MISMATCH_DAMPING = ${MISMATCH_DAMPING};
+    const TWO_TWO_BOOST = ${TWO_TWO_BOOST}, ZERO_ONE_BOOST = ${ZERO_ONE_BOOST};
     const SIGMA_FORM = ${SIGMA_FORM}, SIGMA_IND = ${SIGMA_IND};
-    const PROMOTED_SIGMA = ${JSON.stringify(PROMOTED_SIGMA)};
-    const THIN_PRIOR_SIGMA = ${JSON.stringify(THIN_PRIOR_SIGMA)};
+    let _sigmaMult = ${JSON.stringify(sigmaMultipliers(STATE.results))}, _sigmaFor = null, _sigmaLen = -1;
     ${poisson.toString()}
+    ${matchXG.toString()}
+    ${sampleScoreFast.toString()}
     ${gaussRand.toString()}
     ${teamSigma.toString()}
     const POINT_DEDUCTIONS = ${JSON.stringify(POINT_DEDUCTIONS)};
@@ -6187,8 +6300,7 @@ function _mcWorkerSource() {
         const outs = new Array(unplayed.length);
         for (let i = 0; i < unplayed.length; i++) {
           const f = unplayed[i], h = r[f.homeId], a = r[f.awayId];
-          const hg = poisson(Math.max(0.05, (h.atk / LEAGUE_AVG) * a.def * HOME_ATK));
-          const ag = poisson(Math.max(0.05, (a.atk / LEAGUE_AVG) * h.def * AWAY_ATK));
+          const [hg, ag] = sampleScoreFast(...matchXG(h, a));
           sim.push({ homeId: f.homeId, awayId: f.awayId, homeGoals: hg, awayGoals: ag });
           outs[i] = hg > ag ? 'H' : (ag > hg ? 'A' : 'D');
         }
@@ -6344,14 +6456,11 @@ async function runMC() {
     const simResults = [...STATE.results];
     unplayed.forEach(f => {
       const h = r[f.homeId], a = r[f.awayId];
-      const hxg = (h.atk / LEAGUE_AVG) * a.def * HOME_ATK;
-      const axg = (a.atk / LEAGUE_AVG) * h.def * AWAY_ATK;
-      // Fast independent-Poisson sampling for the season MC (Dixon-Coles only
-      // shifts draw rate ~2pp — negligible over a full table; analytic
-      // projections / predictFixture keep the DC matrix for accuracy).
-      simResults.push({ homeId: f.homeId, awayId: f.awayId,
-        homeGoals: poisson(Math.max(0.05, hxg)),
-        awayGoals: poisson(Math.max(0.05, axg)) });
+      // Fast sampling for the season MC (sampleScoreFast: independent Poisson
+      // plus the exact 2-2/0-1 boosts; Dixon-Coles only shifts draw rate ~2pp
+      // over a full table, so it stays in the analytic predictions only).
+      const [hg, ag] = sampleScoreFast(...matchXG(h, a));
+      simResults.push({ homeId: f.homeId, awayId: f.awayId, homeGoals: hg, awayGoals: ag });
     });
     const tbl = buildTable(simResults, true);
     tbl.forEach((row, i) => {
@@ -7762,8 +7871,7 @@ function _survBatch(st, count) {
     const outs = new Array(unplayed.length);
     unplayed.forEach((f, i) => {
       const h = r[f.homeId], a = r[f.awayId];
-      const hg = poisson(Math.max(0.05, (h.atk / LEAGUE_AVG) * a.def * HOME_ATK));
-      const ag = poisson(Math.max(0.05, (a.atk / LEAGUE_AVG) * h.def * AWAY_ATK));
+      const [hg, ag] = sampleScoreFast(...matchXG(h, a));
       sim.push({ homeId: f.homeId, awayId: f.awayId, homeGoals: hg, awayGoals: ag });
       outs[i] = hg > ag ? 'H' : ag > hg ? 'A' : 'D';
     });
@@ -8132,9 +8240,8 @@ function _whatIfSurvival(extra) {
     const sim = [...baseResults];
     unplayed.forEach(f => {
       const h = r[f.homeId], a = r[f.awayId];
-      sim.push({ homeId: f.homeId, awayId: f.awayId,
-        homeGoals: poisson(Math.max(0.05, (h.atk / LEAGUE_AVG) * a.def * HOME_ATK)),
-        awayGoals: poisson(Math.max(0.05, (a.atk / LEAGUE_AVG) * h.def * AWAY_ATK)) });
+      const [hg, ag] = sampleScoreFast(...matchXG(h, a));
+      sim.push({ homeId: f.homeId, awayId: f.awayId, homeGoals: hg, awayGoals: ag });
     });
     const tbl = buildTable(sim, true); let pos = 20;
     tbl.forEach((row, i) => { if (row.id === 'hull') pos = i + 1; });
