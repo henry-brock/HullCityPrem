@@ -2,9 +2,36 @@
 
 A season simulator and analysis app built around one question: **do Hull City stay up?**
 
-Local Flask app + single-file frontend. Match results, fixtures and Opta stats are
-pulled from public APIs; everything else — ratings, simulations, player ratings — is
-derived here.
+Local Flask app + single-file frontend (vanilla JS, no build step). Match results,
+fixtures and Opta stats are pulled from public APIs; everything else — ratings,
+simulations, player ratings, scoreline modelling — is derived here.
+
+**Stack:** Python 3 / Flask backend, single-file HTML/CSS/JS frontend, Monte Carlo
+simulation in Web Workers, no external JS dependencies.
+
+---
+
+## What it does
+
+- **Live league table** that folds in in-progress scores, animating each result
+  onto the standings one at a time.
+- **Monte Carlo season simulation** (200,000 seasons, parallelised across cores)
+  giving every club's title / European / relegation odds and a full
+  finishing-position distribution.
+- **Survival model** — the headline question — with the points total that has
+  historically been enough to stay up, and each rival's relegation odds
+  conditional on Hull surviving.
+- **Match predictor** — Dixon-Coles bivariate Poisson with Premier League-specific
+  scoreline calibration, giving win/draw/loss, the most likely scoreline, and a
+  full score grid.
+- **Live tab** — in-play win/draw/loss re-projected from the score and the minutes
+  left (stoppage time included), plus a per-match 1–10 player rater.
+- **Player ratings** scored against positional peers across all 20 squads, not
+  just teammates.
+- **Points-deduction support** (e.g. an FFP sanction) that flows through the table,
+  projections and every simulated season.
+- An **ops panel** on a separate loopback IP for refreshing data and restarting
+  the app without taking it down.
 
 ---
 
@@ -40,6 +67,19 @@ cancels per-stat noise while fitting only two parameters per side, so there is
 nothing to overfit — it beat the previous opponent-adjusted ratings in all three
 leave-one-season-out folds.
 
+Two calibrations are fitted to how the Premier League actually finishes games,
+each validated out-of-sample (fit two seasons, test a third) before shipping:
+
+- **Mismatch damping** — the raw model expected bigger gaps than reality delivers
+  (favourites won less often than predicted at every confidence level), so each
+  side's xG is pulled toward its league mean, `xG' = mean · (xG/mean)^0.80`.
+- **Scoreline boosts** — 2–2 and 0–1 are under-predicted every season on record,
+  so each is nudged up. Fitting one ratio per scoreline, by contrast, just learns
+  one season's noise.
+
+All of it lives in one `matchXG()` the predictor, Live tab, projections and every
+simulation call, so they cannot disagree about how good a team is.
+
 ---
 
 ## Data sources
@@ -53,6 +93,11 @@ leave-one-season-out folds.
 
 Results merge cheapest-detail-first: Pulse for speed, football-data overlaid for odds.
 Already-stored matches are backfilled with any field they lack.
+
+**No data ships with the repo.** Everything above is fetched into local, git-ignored
+caches (`cache/`, `Newcache/`, `data.json`) on first run, and is regenerable by
+running the scrapers. The third-party data stays subject to its providers' terms;
+only the code here is MIT-licensed.
 
 ---
 
@@ -78,6 +123,7 @@ Already-stored matches are backfilled with any field they lack.
 |---|---|
 | `prior_backtest.py` | scores pre-season priors on a held-out season |
 | `backtest.py` | match- and table-level walk-forward, on-field skill benchmark |
+| `scoreline_backtest.py` | out-of-sample test of scoreline calibration (damping, 2–2/0–1 boosts) |
 | `newcache_probe.py` / `stat_sweep.py` | rank candidate metrics by out-of-sample predictiveness |
 | `tune.py` | parameter search |
 
@@ -112,3 +158,10 @@ Most ideas tested here were rejected, and the rejections are the useful part:
 Built during the 2026/27 season, so several pages are sparse until enough matches
 are played. Ratings shrink toward average by minutes or matches seen rather than
 hiding behind a threshold, so early-season numbers read as uncertain instead of wrong.
+
+---
+
+## License
+
+[MIT](LICENSE) — covers the source only. Third-party football data is not included
+or redistributed; see the note under **Data sources**.
