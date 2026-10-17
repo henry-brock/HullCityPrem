@@ -1,17 +1,54 @@
-# Scraped third-party match data — all regenerable by running the scrapers.
-# Kept out of the repo for size (~26MB) and to avoid redistributing Opta/Pulse data.
+# ─────────────────────────────────────────────────────────────────────────
+# Scraped third-party match data — NEVER commit.
+#
+# Everything here is regenerable by running the scrapers, is large (~30MB),
+# and is Opta/Pulse data that must not be redistributed. Two layers:
+#   1. the directories every scraper actually writes to (primary), and
+#   2. filename/extension backstops, so a stray data file dropped at the repo
+#      root — or a scraper whose output path changes — still cannot be
+#      committed by accident.
+# The repo tracks only source (.py/.html/.md), so these backstops hide nothing
+# legitimate. If you ever add a real root-level config.json or data.csv, add
+# it deliberately with: git add -f <file>
+#
+# NOTE: gitignore has no inline comments — a '#' only starts a comment at the
+# start of a line. Keep every pattern on its own line.
+# ─────────────────────────────────────────────────────────────────────────
+
+# 1. scraper output directories
 cache/
 Newcache/
 
+# 2. backstops for scraped data landing elsewhere.
+# All JSON/CSV in this repo is state or scraped data — source is only
+# .py/.html/.md. Blanket-ignored so no data file can be committed by accident,
+# anywhere in the tree. To track a genuine config file: git add -f <file>
+*.json
+*.csv
+# write-then-rename temp files (e.g. deductions.json.tmp, cache/*.json.tmp)
+*.tmp
+*.json.tmp
+
 # Local app state — rebuilt on first run; changes on every result entered.
+# (root JSON is also covered above; kept explicit for clarity)
 data.json
 deductions.json
 
-# Runtime / editor / tooling
+# Runtime / process / logs
 .server.pid
-app.log
+*.log
+
+# Python
 __pycache__/
 *.pyc
+*.pyo
+.venv/
+venv/
+env/
+
+# Editors / OS
 .claude/
 .zed/
+.vscode/
+.idea/
 .DS_Store
