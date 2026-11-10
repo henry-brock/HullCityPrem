@@ -1,0 +1,14 @@
+# Hull City PL Predictor — Python dependencies
+# Install: python3 -m pip install -r requirements.txt   (use a venv on Debian/Ubuntu: PEP 668)
+
+# Web app (app.py, admin.py)
+Flask>=3.1,<4
+# Flask pulls in Werkzeug, Jinja2, MarkupSafe, itsdangerous, click and blinker;
+# listed explicitly because a missing MarkupSafe/Jinja2 once stopped the server starting.
+Jinja2>=3.1
+MarkupSafe>=2.1
+
+# Scrapers and data tooling
+requests>=2.32
+beautifulsoup4>=4.12
+numpy>=2.2
