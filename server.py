@@ -5,6 +5,7 @@ import os
 import re
 import sys
 import signal
+import socket
 import subprocess
 import time
 import webbrowser
@@ -14,6 +15,7 @@ PORT     = 8080
 URL      = f"http://localhost:{PORT}"
 ROOT     = Path(__file__).parent
 PID_FILE = ROOT / ".server.pid"
+LOG_FILE = ROOT / "app.log"
 
 # ═══════════════════════════════════════════════
 # TERMINAL CAPABILITY DETECTION
@@ -101,6 +103,18 @@ def is_running() -> bool:
         PID_FILE.unlink(missing_ok=True)
         return False
 
+def _port_open() -> bool:
+    with socket.socket() as s:
+        s.settimeout(0.2)
+        return s.connect_ex(("127.0.0.1", PORT)) == 0
+
+def _log_tail(n: int = 8) -> list:
+    try:
+        lines = LOG_FILE.read_text(errors="replace").splitlines()
+    except OSError:
+        return []
+    return lines[-n:]
+
 def _pid() -> str:
     return PID_FILE.read_text().strip() if PID_FILE.exists() else "—"
 
@@ -114,22 +128,46 @@ def start(quiet: bool = False) -> bool:
                   f"{FG_WHITE}{DIM}PID {_pid()}  │  {URL}{R}")
         return True
 
-    proc = subprocess.Popen(
-        [sys.executable, ROOT / "app.py"],
-        cwd=ROOT,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    PID_FILE.write_text(str(proc.pid))
-    time.sleep(0.6)
+    if _port_open():
+        print(f"  {FG_RED}✖  {FG_WHITE}Port {PORT} is already in use by another "
+              f"process (not tracked by {PID_FILE.name}){R}")
+        return False
 
-    if is_running():
+    # Same log file admin.py's restart uses, so output is never lost.
+    with LOG_FILE.open("ab") as log:
+        proc = subprocess.Popen(
+            [sys.executable, ROOT / "app.py"],
+            cwd=ROOT,
+            stdout=log,
+            stderr=log,
+        )
+    PID_FILE.write_text(str(proc.pid))
+
+    # Wait until the port is listening (success) or the process dies (failure).
+    # A fixed short sleep can't tell "still booting" from "about to crash".
+    up = False
+    for _ in range(50):
+        if proc.poll() is not None:
+            break
+        if _port_open():
+            up = True
+            break
+        time.sleep(0.2)
+
+    if up and proc.poll() is None:
         if not quiet:
             print(f"  {FG_GREEN}●  {FG_WHITE}Server started{R}  "
                   f"{FG_WHITE}{DIM}PID {_pid()}  │  {FG_AMBER}{URL}{R}")
         return True
 
-    print(f"  {FG_RED}✖  {FG_WHITE}Failed to start — is port {PORT} in use?{R}")
+    print(f"  {FG_RED}✖  {FG_WHITE}Failed to start{R}")
+    tail = _log_tail()
+    if tail:
+        print(f"  {FG_GREY}Last lines of {LOG_FILE.name}:{R}")
+        for line in tail:
+            print(f"    {FG_GREY}{line}{R}")
+    else:
+        print(f"  {FG_WHITE}No output in {LOG_FILE.name} — is port {PORT} in use?{R}")
     PID_FILE.unlink(missing_ok=True)
     return False
 
